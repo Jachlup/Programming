@@ -1,0 +1,1480 @@
+__doc__ = """Hinge joint example, for detailed explanation refer to Zhang et. al. Nature Comm.  methods section."""
+
+import numpy as np
+import elastica as ea
+from pathlib import Path
+from Joint_postprocessing import (
+    plot_position,
+    plot_video_three_rods,
+    plot_video_xy_three_rods,
+    plot_video_xz,
+)
+
+
+class HingeJointSimulator(
+    ea.BaseSystemCollection,
+    ea.Constraints,
+    ea.Connections,
+    ea.Forcing,
+    ea.Damping,
+    ea.CallBacks,
+):
+    pass
+
+
+class NodeForce(ea.NoForces):
+    def __init__(self, force, node_idx: int):
+        super().__init__()
+        self.force = np.asarray(force, dtype=float)
+        self.node_idx = int(node_idx)
+
+    def apply_forces(self, system, time=np.float64(0.0)) -> None:
+        system.external_forces[..., self.node_idx] += self.force
+
+
+def endpoints_to_vector_and_length(node_a, node_b):
+    direction_vector = node_b - node_a
+    length = np.linalg.norm(direction_vector)
+    if length == 0.0:
+        raise ValueError("Rod endpoints must be different points.")
+    direction = direction_vector / length
+    return node_a, direction, length
+
+
+hinge_joint_sim = HingeJointSimulator()
+
+# setting up test params
+n_elem = 10
+normal = np.array([0.0, 0.0, 1.0])
+roll_direction = normal.copy()
+base_radius = 0.007
+base_area = np.pi * base_radius**2
+density = 1750
+E = 2e6
+poisson_ratio = 0.5
+shear_modulus = E / (poisson_ratio + 1.0)
+E_rod3 = 2e5
+shear_modulus_rod3 = E_rod3 / (poisson_ratio + 1.0)
+num_parallel_rod3 = 3
+beam_attach_span_nodes = 4
+
+start_rod_1 = np.array([0.0, 0.0, 0.0])
+end_rod_1 = np.array([0.0, 0.1, 0.0])
+start_rod_1, direction_rod1, base_length = endpoints_to_vector_and_length(
+    start_rod_1, end_rod_1
+)
+
+attach_idx_rod1 = n_elem // 2
+attach_pos_rod1 = (
+    start_rod_1 + direction_rod1 * (base_length * attach_idx_rod1 / n_elem)
+)
+
+start_rod_2 = end_rod_1.copy()
+end_rod_2 = np.array([0.03, 0.0045, 0.0])
+start_rod_2, direction_rod2, base_length_rod2 = endpoints_to_vector_and_length(
+    start_rod_2, end_rod_2
+)
+
+attach_idx_rod2 = n_elem // 2
+attach_pos_rod2 = (
+    start_rod_2 + direction_rod2 * (base_length_rod2 * attach_idx_rod2 / n_elem)
+)
+
+attach_offsets = np.rint(
+    np.linspace(-beam_attach_span_nodes / 2, beam_attach_span_nodes / 2, num_parallel_rod3)
+).astype(int)
+attach_idx_rod1_all = np.clip(attach_idx_rod1 + attach_offsets, 0, n_elem)
+attach_idx_rod2_all = np.clip(attach_idx_rod2 + attach_offsets, 0, n_elem)
+
+# Create rod 1
+rod1 = ea.CosseratRod.straight_rod(
+    n_elem,
+    start_rod_1,
+    direction_rod1,
+    normal,
+    base_length,
+    base_radius,
+    density,
+    youngs_modulus=E,
+    shear_modulus=shear_modulus,
+)
+hinge_joint_sim.append(rod1)
+# Create rod 2
+normal = np.array([0.0, 0.0, 1.0])
+rod2 = ea.CosseratRod.straight_rod(
+    n_elem,
+    start_rod_2,
+    direction_rod2,
+    normal,
+    base_length_rod2,
+    base_radius,
+    density,
+    youngs_modulus=E,
+    shear_modulus=shear_modulus,
+)
+hinge_joint_sim.append(rod2)
+
+# Create multiple rod3-like rods between distributed rod1/rod2 attachment points
+rod3_list = []
+for attach_idx_rod2_i, attach_idx_rod1_i in zip(attach_idx_rod2_all, attach_idx_rod1_all):
+    attach_pos_rod2_i = start_rod_2 + direction_rod2 * (
+        base_length_rod2 * int(attach_idx_rod2_i) / n_elem
+    )
+    attach_pos_rod1_i = start_rod_1 + direction_rod1 * (
+        base_length * int(attach_idx_rod1_i) / n_elem
+    )
+
+    start_rod_3_i = attach_pos_rod2_i.copy()
+    end_rod_3_i = attach_pos_rod1_i.copy()
+    start_rod_3_i, direction_rod3_i, base_length_rod3_i = endpoints_to_vector_and_length(
+        start_rod_3_i, end_rod_3_i
+    )
+
+    rod3_i = ea.CosseratRod.straight_rod(
+        n_elem,
+        start_rod_3_i,
+        direction_rod3_i,
+        normal,
+        base_length_rod3_i,
+        base_radius,
+        density,
+        youngs_modulus=E_rod3,
+        shear_modulus=shear_modulus_rod3,
+    )
+    hinge_joint_sim.append(rod3_i)
+    rod3_list.append(rod3_i)
+
+# Apply boundary conditions to rod1.
+hinge_joint_sim.constrain(rod1).using(
+    ea.OneEndFixedBC, constrained_position_idx=(0,), constrained_director_idx=(0,)
+)
+hinge_joint_sim.constrain(rod2).using(
+    ea.GeneralConstraint,
+    rod2.position_collection[..., -1].copy(),
+    constrained_position_idx=(n_elem,),
+    translational_constraint_selector=np.array([True, True, True]),
+)
+
+# Connect rod 1 and rod 2
+hinge_joint_sim.connect(
+    first_rod=rod1, second_rod=rod2, first_connect_idx=-1, second_connect_idx=0
+).using(
+    ea.HingeJoint, k=5e4, nu=50.0, kt=0.0, normal_direction=roll_direction
+)  # 1e-2
+
+# Connect rod 2/rod 1 to every rod3-like rod using distributed attachment nodes
+for rod3_i, attach_idx_rod2_i, attach_idx_rod1_i in zip(
+    rod3_list, attach_idx_rod2_all, attach_idx_rod1_all
+):
+    hinge_joint_sim.connect(
+        first_rod=rod2,
+        second_rod=rod3_i,
+        first_connect_idx=int(attach_idx_rod2_i),
+        second_connect_idx=0,
+    ).using(ea.HingeJoint, k=5e3, nu=20.0, kt=0.0, normal_direction=roll_direction)
+
+    hinge_joint_sim.connect(
+        first_rod=rod1,
+        second_rod=rod3_i,
+        first_connect_idx=int(attach_idx_rod1_i),
+        second_connect_idx=-1,
+    ).using(ea.HingeJoint, k=5e3, nu=20.0, kt=0.0, normal_direction=roll_direction)
+
+# Add forces to rod2
+hinge_joint_sim.add_forcing_to(rod2).using(
+    NodeForce,
+    force=np.array([0.5, 0.0, 0.0]),
+    node_idx=1,
+)
+
+# add damping
+damping_constant = 5e-2
+dt = 1e-5
+hinge_joint_sim.dampen(rod1).using(
+    ea.AnalyticalLinearDamper,
+    damping_constant=damping_constant,
+    time_step=dt,
+)
+hinge_joint_sim.dampen(rod2).using(
+    ea.AnalyticalLinearDamper,
+    damping_constant=damping_constant,
+    time_step=dt,
+)
+for rod3_i in rod3_list:
+    hinge_joint_sim.dampen(rod3_i).using(
+        ea.AnalyticalLinearDamper,
+        damping_constant=damping_constant,
+        time_step=dt,
+    )
+
+pp_list_rod1 = ea.defaultdict(list)
+pp_list_rod2 = ea.defaultdict(list)
+pp_list_rod3_all = [ea.defaultdict(list) for _ in range(num_parallel_rod3)]
+
+hinge_joint_sim.collect_diagnostics(rod1).using(
+    ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod1
+)
+hinge_joint_sim.collect_diagnostics(rod2).using(
+    ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod2
+)
+for rod3_i, pp_list_rod3_i in zip(rod3_list, pp_list_rod3_all):
+    hinge_joint_sim.collect_diagnostics(rod3_i).using(
+        ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod3_i
+    )
+
+hinge_joint_sim.finalize()
+timestepper = ea.PositionVerlet()
+# timestepper = PEFRL()
+
+final_time = 1
+dl = base_length / n_elem
+total_steps = int(final_time / dt)
+print("Total steps", total_steps)
+ea.integrate(timestepper, hinge_joint_sim, final_time, total_steps)
+
+PLOT_FIGURE = True
+SAVE_FIGURE = True
+PLOT_VIDEO = True
+
+# plotting results
+# if PLOT_FIGURE:
+#     filename = "hinge_joint_test.png"
+#     plot_position(pp_list_rod1, pp_list_rod2, filename, SAVE_FIGURE)
+
+if PLOT_VIDEO:
+    output_dir = Path(__file__).resolve().parent
+    filename = output_dir / "hinge_joint_test.mp4"
+    # plot_video_three_rods(
+    #     pp_list_rod1,
+    #     pp_list_rod2,
+    #     pp_list_rod3,
+    #     video_name=str(filename),
+    #     fps=100,
+    # )
+    plot_video_xy_three_rods(
+        pp_list_rod1,
+        pp_list_rod2,
+        pp_list_rod3_all,
+        video_name=str(output_dir / "hinge_joint_test_xy.mp4"),
+        fps=100,
+    )
+    # plot_video_xz(
+    #     pp_list_rod1, pp_list_rod2, video_name=filename + "_xz.mp4", margin=0.2, fps=100
+    # )
+
+
+
+
+
+
+
+
+"""11:14 18 Mar"""
+
+
+__doc__ = """Hinge joint example, for detailed explanation refer to Zhang et. al. Nature Comm.  methods section."""
+
+import numpy as np
+import elastica as ea
+from pathlib import Path
+from Joint_postprocessing import (
+    plot_position,
+    plot_video_three_rods,
+    plot_video_xy_three_rods,
+    plot_video_xz,
+)
+
+
+class HingeJointSimulator(
+    ea.BaseSystemCollection,
+    ea.Constraints,
+    ea.Connections,
+    ea.Forcing,
+    ea.Damping,
+    ea.CallBacks,
+):
+    pass
+
+
+class NodeForce(ea.NoForces):
+    def __init__(self, force, node_idx: int):
+        super().__init__()
+        self.force = np.asarray(force, dtype=float)
+        self.node_idx = int(node_idx)
+
+    def apply_forces(self, system, time=np.float64(0.0)) -> None:
+        system.external_forces[..., self.node_idx] += self.force
+
+
+def endpoints_to_vector_and_length(node_a, node_b):
+    direction_vector = node_b - node_a
+    length = np.linalg.norm(direction_vector)
+    if length == 0.0:
+        raise ValueError("Rod endpoints must be different points.")
+    direction = direction_vector / length
+    return node_a, direction, length
+
+
+hinge_joint_sim = HingeJointSimulator()
+
+# setting up test params
+n_elem = 8
+normal = np.array([0.0, 0.0, 1.0])
+roll_direction = normal.copy()
+base_radius = 0.007
+base_area = np.pi * base_radius**2
+density = 1750
+E = 2e6
+poisson_ratio = 0.5
+shear_modulus = E / (poisson_ratio + 1.0)
+E_rod3 = 2e5
+shear_modulus_rod3 = E_rod3 / (poisson_ratio + 1.0)
+num_parallel_rod3 = 10
+beam_attach_span_nodes = 5
+
+start_rod_1 = np.array([0.0, 0.0, 0.0])
+end_rod_1 = np.array([0.0, 0.1, 0.0])
+start_rod_1, direction_rod1, base_length = endpoints_to_vector_and_length(
+    start_rod_1, end_rod_1
+)
+
+attach_idx_rod1 = n_elem // 2
+attach_pos_rod1 = (
+    start_rod_1 + direction_rod1 * (base_length * attach_idx_rod1 / n_elem)
+)
+
+start_rod_2 = np.array([0.03, 0.0045, 0.0])
+end_rod_2 = end_rod_1.copy()
+start_rod_2, direction_rod2, base_length_rod2 = endpoints_to_vector_and_length(
+    start_rod_2, end_rod_2
+)
+
+attach_idx_rod2 = n_elem // 2
+attach_pos_rod2 = (
+    start_rod_2 + direction_rod2 * (base_length_rod2 * attach_idx_rod2 / n_elem)
+)
+
+attach_offsets = np.rint(
+    np.linspace(-beam_attach_span_nodes / 2, beam_attach_span_nodes / 2, num_parallel_rod3)
+).astype(int)
+attach_idx_rod1_all = np.clip(attach_idx_rod1 + attach_offsets, 0, n_elem)
+attach_idx_rod2_all = np.clip(attach_idx_rod2 + attach_offsets, 0, n_elem)
+
+# Create rod 1
+rod1 = ea.CosseratRod.straight_rod(
+    n_elem,
+    start_rod_1,
+    direction_rod1,
+    normal,
+    base_length,
+    base_radius,
+    density,
+    youngs_modulus=E,
+    shear_modulus=shear_modulus,
+)
+hinge_joint_sim.append(rod1)
+# Create rod 2
+normal = np.array([0.0, 0.0, 1.0])
+rod2 = ea.CosseratRod.straight_rod(
+    n_elem,
+    start_rod_2,
+    direction_rod2,
+    normal,
+    base_length_rod2,
+    base_radius,
+    density,
+    youngs_modulus=E,
+    shear_modulus=shear_modulus,
+)
+hinge_joint_sim.append(rod2)
+
+# Create multiple rod3-like rods between distributed rod1/rod2 attachment points
+rod3_list = []
+for attach_idx_rod2_i, attach_idx_rod1_i in zip(attach_idx_rod2_all, attach_idx_rod1_all):
+    attach_pos_rod2_i = start_rod_2 + direction_rod2 * (
+        base_length_rod2 * int(attach_idx_rod2_i) / n_elem
+    )
+    attach_pos_rod1_i = start_rod_1 + direction_rod1 * (
+        base_length * int(attach_idx_rod1_i) / n_elem
+    )
+
+    start_rod_3_i = attach_pos_rod2_i.copy()
+    end_rod_3_i = attach_pos_rod1_i.copy()
+    start_rod_3_i, direction_rod3_i, base_length_rod3_i = endpoints_to_vector_and_length(
+        start_rod_3_i, end_rod_3_i
+    )
+
+    rod3_i = ea.CosseratRod.straight_rod(
+        n_elem,
+        start_rod_3_i,
+        direction_rod3_i,
+        normal,
+        base_length_rod3_i,
+        base_radius,
+        density,
+        youngs_modulus=E_rod3,
+        shear_modulus=shear_modulus_rod3,
+    )
+    hinge_joint_sim.append(rod3_i)
+    rod3_list.append(rod3_i)
+
+# Apply boundary conditions to rod1.
+hinge_joint_sim.constrain(rod1).using(
+    ea.OneEndFixedBC, constrained_position_idx=(0,), constrained_director_idx=(0,)
+)
+hinge_joint_sim.constrain(rod2).using(
+    ea.GeneralConstraint,
+    rod2.position_collection[..., 0].copy(),
+    constrained_position_idx=(0,),
+    translational_constraint_selector=np.array([True, True, True]),
+)
+
+# Connect rod 1 and rod 2
+hinge_joint_sim.connect(
+    first_rod=rod1, second_rod=rod2, first_connect_idx=-1, second_connect_idx=-1
+).using(
+    ea.HingeJoint, k=5e4, nu=50.0, kt=0.0, normal_direction=roll_direction
+)  # 1e-2
+
+# Connect rod 2/rod 1 to every rod3-like rod using distributed attachment nodes
+for rod3_i, attach_idx_rod2_i, attach_idx_rod1_i in zip(
+    rod3_list, attach_idx_rod2_all, attach_idx_rod1_all
+):
+    hinge_joint_sim.connect(
+        first_rod=rod2,
+        second_rod=rod3_i,
+        first_connect_idx=int(attach_idx_rod2_i),
+        second_connect_idx=0,
+    ).using(ea.HingeJoint, k=5e3, nu=20.0, kt=0.0, normal_direction=roll_direction)
+
+    hinge_joint_sim.connect(
+        first_rod=rod1,
+        second_rod=rod3_i,
+        first_connect_idx=int(attach_idx_rod1_i),
+        second_connect_idx=-1,
+    ).using(ea.HingeJoint, k=5e3, nu=20.0, kt=0.0, normal_direction=roll_direction)
+
+# Add forces to rod2
+hinge_joint_sim.add_forcing_to(rod2).using(
+    NodeForce,
+    force=np.array([0.5, 0.0, 0.0]),
+    node_idx=1,
+)
+
+# add damping
+damping_constant = 5e-2
+dt = 1e-5
+hinge_joint_sim.dampen(rod1).using(
+    ea.AnalyticalLinearDamper,
+    damping_constant=damping_constant,
+    time_step=dt,
+)
+hinge_joint_sim.dampen(rod2).using(
+    ea.AnalyticalLinearDamper,
+    damping_constant=damping_constant,
+    time_step=dt,
+)
+for rod3_i in rod3_list:
+    hinge_joint_sim.dampen(rod3_i).using(
+        ea.AnalyticalLinearDamper,
+        damping_constant=damping_constant,
+        time_step=dt,
+    )
+
+pp_list_rod1 = ea.defaultdict(list)
+pp_list_rod2 = ea.defaultdict(list)
+pp_list_rod3_all = [ea.defaultdict(list) for _ in range(num_parallel_rod3)]
+
+hinge_joint_sim.collect_diagnostics(rod1).using(
+    ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod1
+)
+hinge_joint_sim.collect_diagnostics(rod2).using(
+    ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod2
+)
+for rod3_i, pp_list_rod3_i in zip(rod3_list, pp_list_rod3_all):
+    hinge_joint_sim.collect_diagnostics(rod3_i).using(
+        ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod3_i
+    )
+
+hinge_joint_sim.finalize()
+timestepper = ea.PositionVerlet()
+# timestepper = PEFRL()
+
+final_time = 0.2
+dl = base_length / n_elem
+total_steps = int(final_time / dt)
+print("Total steps", total_steps)
+ea.integrate(timestepper, hinge_joint_sim, final_time, total_steps)
+
+PLOT_FIGURE = True
+SAVE_FIGURE = True
+PLOT_VIDEO = True
+
+# plotting results
+# if PLOT_FIGURE:
+#     filename = "hinge_joint_test.png"
+#     plot_position(pp_list_rod1, pp_list_rod2, filename, SAVE_FIGURE)
+
+if PLOT_VIDEO:
+    output_dir = Path(__file__).resolve().parent
+    filename = output_dir / "hinge_joint_test.mp4"
+    # plot_video_three_rods(
+    #     pp_list_rod1,
+    #     pp_list_rod2,
+    #     pp_list_rod3,
+    #     video_name=str(filename),
+    #     fps=100,
+    # )
+    plot_video_xy_three_rods(
+        pp_list_rod1,
+        pp_list_rod2,
+        pp_list_rod3_all,
+        video_name=str(output_dir / "hinge_joint_test_xy.mp4"),
+        fps=100,
+    )
+    # plot_video_xz(
+    #     pp_list_rod1, pp_list_rod2, video_name=filename + "_xz.mp4", margin=0.2, fps=100
+    # )
+
+
+"""16:14 18 Mar Joint_postprocessing"""
+import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.colors import to_rgb
+from scipy.spatial.transform import Rotation
+
+
+DOT_SIZE = 2
+BEAM_WIDTH = 3
+ZOOM_XY_XLIM = (-0.05, 0.08)
+ZOOM_XY_YLIM = (-0.01, 0.11)
+ZOOM_3D_ZLIM = (-0.02, 0.02)
+
+
+def _position_collections_from_input(plot_params_rod3):
+    if isinstance(plot_params_rod3, dict):
+        return [np.array(plot_params_rod3["position"])]
+    return [np.array(plot_params["position"]) for plot_params in plot_params_rod3]
+
+
+def plot_position(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    filename="spherical_joint_test.png",
+    SAVE_FIGURE=False,
+):
+
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    fig = plt.figure(figsize=(10, 10), frameon=True, dpi=150)
+    ax = fig.add_subplot(111)
+
+    ax.grid(which="minor", color="k", linestyle="--")
+    ax.grid(which="major", color="k", linestyle="-")
+    ax.plot(
+        position_of_rod1[:, 0, -1],
+        position_of_rod1[:, 1, -1],
+        "r-",
+        linewidth=BEAM_WIDTH,
+        label="rod1",
+    )
+    ax.plot(
+        position_of_rod2[:, 0, -1],
+        position_of_rod2[:, 1, -1],
+        c=to_rgb("xkcd:bluish"),
+        linewidth=BEAM_WIDTH,
+        label="rod2",
+    )
+
+    fig.legend(prop={"size": 20})
+
+    plt.show()
+
+    if SAVE_FIGURE:
+        fig.savefig(filename)
+
+
+def plot_orientation(title, time, directors):
+    quat = []
+    for t in range(len(time)):
+        quat_t = Rotation.from_matrix(directors[t].T).as_quat()
+        quat.append(quat_t)
+    quat = np.array(quat)
+
+    plt.figure(num=title)
+    plt.plot(time, quat[:, 0], label="x")
+    plt.plot(time, quat[:, 1], label="y")
+    plt.plot(time, quat[:, 2], label="z")
+    plt.plot(time, quat[:, 3], label="w")
+    plt.title(title)
+    plt.legend()
+    plt.xlabel("Time [s]")
+    plt.ylabel("Quaternion")
+    plt.show()
+
+
+def plot_video(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    video_name="video.mp4",
+    margin=0.2,
+    fps=15,
+):  # (time step, x/y/z, node)
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    print("plot video")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure(figsize=(10, 8), frameon=True, dpi=150)
+    with writer.saving(fig, video_name, 100):
+        for time in range(1, len(time)):
+            fig.clf()
+            ax = plt.axes(projection="3d")  # fig.add_subplot(111)
+            ax.grid(which="minor", color="k", linestyle="--")
+            ax.grid(which="major", color="k", linestyle="-")
+            ax.plot(
+                position_of_rod1[time, 0],
+                position_of_rod1[time, 1],
+                position_of_rod1[time, 2],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            ax.plot(
+                position_of_rod2[time, 0],
+                position_of_rod2[time, 1],
+                position_of_rod2[time, 2],
+                color=to_rgb("xkcd:bluish"),
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+
+            ax.set_xlim(-0.25, 0.25)
+            ax.set_ylim(-0.25, 0.25)
+            ax.set_zlim(0, 0.4)
+            writer.grab_frame()
+
+
+def plot_video_xy(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    video_name="video.mp4",
+    margin=0.2,
+    fps=15,
+):  # (time step, x/y/z, node)
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    print("plot video xy")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure()
+    plt.axis("equal")
+    with writer.saving(fig, video_name, 100):
+        for time in range(1, len(time)):
+            fig.clf()
+            plt.plot(
+                position_of_rod1[time, 0],
+                position_of_rod1[time, 1],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            plt.plot(
+                position_of_rod2[time, 0],
+                position_of_rod2[time, 1],
+                color=to_rgb("xkcd:bluish"),
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+
+            plt.xlim([-0.25, 0.25])
+            plt.ylim([-0.25, 0.25])
+            writer.grab_frame()
+
+
+def plot_video_xz(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    video_name="video.mp4",
+    margin=0.2,
+    fps=15,
+):  # (time step, x/y/z, node)
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    print("plot video xz")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure()
+    plt.axis("equal")
+    with writer.saving(fig, video_name, 100):
+        for time in range(1, len(time)):
+            fig.clf()
+            plt.plot(
+                position_of_rod1[time, 0],
+                position_of_rod1[time, 2],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            plt.plot(
+                position_of_rod2[time, 0],
+                position_of_rod2[time, 2],
+                color=to_rgb("xkcd:bluish"),
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+
+            plt.xlim([-0.25, 0.25])
+            plt.ylim([0, 0.41])
+            writer.grab_frame()
+
+
+def plot_video_three_rods(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    plot_params_rod3,
+    video_name="video.mp4",
+    fps=15,
+):
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+    position_of_rod3_all = _position_collections_from_input(plot_params_rod3)
+    rod3_colors = ["g", "m", "c", "y", "k"]
+
+    print("plot video")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure(figsize=(10, 8), frameon=True, dpi=150)
+    with writer.saving(fig, video_name, 100):
+        for frame_id in range(1, len(time)):
+            fig.clf()
+            ax = plt.axes(projection="3d")
+            ax.plot(
+                position_of_rod1[frame_id, 0],
+                position_of_rod1[frame_id, 1],
+                position_of_rod1[frame_id, 2],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            ax.plot(
+                position_of_rod2[frame_id, 0],
+                position_of_rod2[frame_id, 1],
+                position_of_rod2[frame_id, 2],
+                color="b",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+            for rod_idx, position_of_rod3 in enumerate(position_of_rod3_all):
+                ax.plot(
+                    position_of_rod3[frame_id, 0],
+                    position_of_rod3[frame_id, 1],
+                    position_of_rod3[frame_id, 2],
+                    color=rod3_colors[rod_idx % len(rod3_colors)],
+                    marker="o",
+                    markersize=DOT_SIZE,
+                    linewidth=BEAM_WIDTH,
+                    label=f"rod3_{rod_idx + 1}",
+                )
+
+            ax.set_xlim(*ZOOM_XY_XLIM)
+            ax.set_ylim(*ZOOM_XY_YLIM)
+            ax.set_zlim(*ZOOM_3D_ZLIM)
+            writer.grab_frame()
+
+
+def plot_video_xy_three_rods(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    plot_params_rod3,
+    video_name="video_xy.mp4",
+    fps=15,
+):
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+    position_of_rod3_all = _position_collections_from_input(plot_params_rod3)
+    rod3_colors = ["g", "m", "c", "y", "k"]
+
+    print("plot video xy")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure()
+    plt.axis("equal")
+    with writer.saving(fig, video_name, 100):
+        for frame_id in range(1, len(time)):
+            fig.clf()
+            plt.plot(
+                position_of_rod1[frame_id, 0],
+                position_of_rod1[frame_id, 1],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            plt.plot(
+                position_of_rod2[frame_id, 0],
+                position_of_rod2[frame_id, 1],
+                color="b",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+            for rod_idx, position_of_rod3 in enumerate(position_of_rod3_all):
+                plt.plot(
+                    position_of_rod3[frame_id, 0],
+                    position_of_rod3[frame_id, 1],
+                    color=rod3_colors[rod_idx % len(rod3_colors)],
+                    marker="o",
+                    markersize=DOT_SIZE,
+                    linewidth=BEAM_WIDTH,
+                    label=f"rod3_{rod_idx + 1}",
+                )
+
+            plt.xlim(ZOOM_XY_XLIM)
+            plt.ylim(ZOOM_XY_YLIM)
+            writer.grab_frame()
+
+
+
+
+
+"""11:57 19 Mar Finally 10 rod3s"""
+
+
+
+
+
+import numpy as np
+import elastica as ea
+from pathlib import Path
+from Joint_postprocessing import (
+    plot_position,
+    plot_video_three_rods,
+    plot_video_xy_three_rods,
+    plot_video_xz,
+)
+
+
+class HingeJointSimulator(
+    ea.BaseSystemCollection,
+    ea.Constraints,
+    ea.Connections,
+    ea.Forcing,
+    ea.Damping,
+    ea.CallBacks,
+):
+    pass
+
+
+class NodeForce(ea.NoForces):
+    def __init__(self, force, node_idx: int):
+        super().__init__()
+        self.force = np.asarray(force, dtype=float)
+        self.node_idx = int(node_idx)
+
+    def apply_forces(self, system, time=np.float64(0.0)) -> None:
+        system.external_forces[..., self.node_idx] += self.force
+
+
+def endpoints_to_vector_and_length(node_a, node_b):
+    direction_vector = node_b - node_a
+    length = np.linalg.norm(direction_vector)
+    if length == 0.0:
+        raise ValueError("Rod endpoints must be different points.")
+    direction = direction_vector / length
+    return node_a, direction, length
+
+
+hinge_joint_sim = HingeJointSimulator()
+
+# setting up test params
+n_elem = 10
+n_elem_rod3 = 10
+normal = np.array([0.0, 0.0, 1.0])
+roll_direction = normal.copy()
+base_radius = 0.007
+base_area = np.pi * base_radius**2
+density = 1750
+E = 2e6
+poisson_ratio = 0.5
+shear_modulus = E / (poisson_ratio + 1.0)
+E_rod3 = 2e5
+shear_modulus_rod3 = E_rod3 / (poisson_ratio + 1.0)
+num_parallel_rod3 = 10
+beam_attach_span_nodes = 9
+
+start_rod_1 = np.array([0.0, 0.0, 0.0])
+end_rod_1 = np.array([0.0, 0.1, 0.0])
+start_rod_1, direction_rod1, base_length = endpoints_to_vector_and_length(
+    start_rod_1, end_rod_1
+)
+
+attach_idx_rod1 = n_elem // 2
+attach_pos_rod1 = (
+    start_rod_1 + direction_rod1 * (base_length * attach_idx_rod1 / n_elem)
+)
+
+start_rod_2 = np.array([0.03, 0.0045, 0.0])
+end_rod_2 = end_rod_1.copy()
+start_rod_2, direction_rod2, base_length_rod2 = endpoints_to_vector_and_length(
+    start_rod_2, end_rod_2
+)
+
+attach_idx_rod2 = n_elem // 2
+attach_pos_rod2 = (
+    start_rod_2 + direction_rod2 * (base_length_rod2 * attach_idx_rod2 / n_elem)
+)
+
+# Evenly distribute the attachment indices over the rod's length to prevent overlaps.
+# We go up to n_elem - 1 to avoid the very end node where rod1 and rod2 touch.
+attach_idx_rod1_all = np.linspace(0, n_elem - 1, num_parallel_rod3).astype(int)
+attach_idx_rod2_all = np.linspace(0, n_elem - 1, num_parallel_rod3).astype(int)
+
+# Create rod 1
+rod1 = ea.CosseratRod.straight_rod(
+    n_elem,
+    start_rod_1,
+    direction_rod1,
+    normal,
+    base_length,
+    base_radius,
+    density,
+    youngs_modulus=E,
+    shear_modulus=shear_modulus,
+)
+hinge_joint_sim.append(rod1)
+# Create rod 2
+normal = np.array([0.0, 0.0, 1.0])
+rod2 = ea.CosseratRod.straight_rod(
+    n_elem,
+    start_rod_2,
+    direction_rod2,
+    normal,
+    base_length_rod2,
+    base_radius,
+    density,
+    youngs_modulus=E,
+    shear_modulus=shear_modulus,
+)
+hinge_joint_sim.append(rod2)
+# Create multiple rod3-like rods between distributed rod1/rod2 attachment points
+rod3_list = []
+for idx2, idx1 in zip(attach_idx_rod2_all, attach_idx_rod1_all):
+    start_pos = start_rod_2 + direction_rod2 * (base_length_rod2 * idx2 / n_elem)
+    end_pos = start_rod_1 + direction_rod1 * (base_length * idx1 / n_elem)
+    
+    start_rod3, direction_rod3, length_rod3 = endpoints_to_vector_and_length(start_pos, end_pos)
+    
+    rod3 = ea.CosseratRod.straight_rod(
+        n_elem_rod3, start_rod3, direction_rod3, normal, length_rod3,
+        base_radius, density, youngs_modulus=E_rod3, shear_modulus=shear_modulus_rod3,
+    )
+    hinge_joint_sim.append(rod3)
+    rod3_list.append(rod3)
+
+# Apply boundary conditions to rod1.
+hinge_joint_sim.constrain(rod1).using(
+    ea.OneEndFixedBC, constrained_position_idx=(0,), constrained_director_idx=(0,)
+)
+hinge_joint_sim.constrain(rod2).using(
+    ea.GeneralConstraint,
+    rod2.position_collection[..., 0].copy(),
+    constrained_position_idx=(0,),
+    translational_constraint_selector=np.array([True, True, True]),
+)
+
+# Connect rod 1 and rod 2
+hinge_joint_sim.connect(
+    first_rod=rod1, second_rod=rod2, first_connect_idx=-1, second_connect_idx=-1
+).using(
+    ea.HingeJoint, k=1e4, nu=1.0, kt=0.0, normal_direction=roll_direction
+)  # 1e-2
+
+# Connect rod 2/rod 1 to every rod3-like rod using distributed attachment nodes
+for rod3_i, attach_idx_rod2_i, attach_idx_rod1_i in zip(
+    rod3_list, attach_idx_rod2_all, attach_idx_rod1_all
+):
+    hinge_joint_sim.connect(
+        first_rod=rod2,
+        second_rod=rod3_i,
+        first_connect_idx=int(attach_idx_rod2_i),
+        second_connect_idx=0,
+    ).using(ea.HingeJoint, k=1e4, nu=1.0, kt=0.0, normal_direction=roll_direction)
+
+    hinge_joint_sim.connect(
+        first_rod=rod1,
+        second_rod=rod3_i,
+        first_connect_idx=int(attach_idx_rod1_i),
+        second_connect_idx=-1,
+    ).using(ea.HingeJoint, k=1e4, nu=1.0, kt=0.0, normal_direction=roll_direction)
+
+# Add forces to rod2
+hinge_joint_sim.add_forcing_to(rod2).using(
+    NodeForce,
+    force=np.array([0.5, 0.0, 0.0]),
+    node_idx=1,
+)
+
+# add damping
+damping_constant = 5e-2
+dt = 5e-6
+hinge_joint_sim.dampen(rod1).using(
+    ea.AnalyticalLinearDamper,
+    damping_constant=damping_constant,
+    time_step=dt,
+)
+hinge_joint_sim.dampen(rod2).using(
+    ea.AnalyticalLinearDamper,
+    damping_constant=damping_constant,
+    time_step=dt,
+)
+for rod3_i in rod3_list:
+    hinge_joint_sim.dampen(rod3_i).using(
+        ea.AnalyticalLinearDamper,
+        damping_constant=damping_constant,
+        time_step=dt,
+    )
+
+pp_list_rod1 = ea.defaultdict(list)
+pp_list_rod2 = ea.defaultdict(list)
+pp_list_rod3_all = [ea.defaultdict(list) for _ in range(num_parallel_rod3)]
+
+hinge_joint_sim.collect_diagnostics(rod1).using(
+    ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod1
+)
+hinge_joint_sim.collect_diagnostics(rod2).using(
+    ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod2
+)
+for rod3_i, pp_list_rod3_i in zip(rod3_list, pp_list_rod3_all):
+    hinge_joint_sim.collect_diagnostics(rod3_i).using(
+        ea.MyCallBack, step_skip=1000, callback_params=pp_list_rod3_i
+    )
+
+hinge_joint_sim.finalize()
+timestepper = ea.PositionVerlet()
+# timestepper = PEFRL()
+
+final_time = 0.2
+dl = base_length / n_elem
+total_steps = int(final_time / dt)
+print("Total steps", total_steps)
+ea.integrate(timestepper, hinge_joint_sim, final_time, total_steps)
+
+PLOT_FIGURE = True
+SAVE_FIGURE = True
+PLOT_VIDEO = True
+
+# plotting results
+# if PLOT_FIGURE:
+#     filename = "hinge_joint_test.png"
+#     plot_position(pp_list_rod1, pp_list_rod2, filename, SAVE_FIGURE)
+
+if PLOT_VIDEO:
+    output_dir = Path(__file__).resolve().parent
+    filename = output_dir / "hinge_joint_test.mp4"
+    # plot_video_three_rods(
+    #     pp_list_rod1,
+    #     pp_list_rod2,
+    #     pp_list_rod3,
+    #     video_name=str(filename),
+    #     fps=100,
+    # )
+    plot_video_xy_three_rods(
+        pp_list_rod1,
+        pp_list_rod2,
+        pp_list_rod3_all,
+        video_name=str(output_dir / "hinge_joint_test_xy.mp4"),
+        fps=100,
+    )
+    # plot_video_xz(
+    #     pp_list_rod1, pp_list_rod2, video_name=filename + "_xz.mp4", margin=0.2, fps=100
+    # )
+
+
+
+
+"""18:15 19 Mar Finally 10 rod3s"""
+
+
+
+import numpy as np
+from matplotlib import pyplot as plt
+from matplotlib.colors import to_rgb
+from scipy.spatial.transform import Rotation
+
+
+DOT_SIZE = 2
+BEAM_WIDTH = 3
+ZOOM_XY_XLIM = (-0.05, 0.08)
+ZOOM_XY_YLIM = (-0.01, 0.11)
+ZOOM_3D_ZLIM = (-0.02, 0.02)
+
+
+def _position_collections_from_input(plot_params_rod3):
+    if isinstance(plot_params_rod3, dict):
+        return [np.array(plot_params_rod3["position"])]
+    return [np.array(plot_params["position"]) for plot_params in plot_params_rod3]
+
+
+def plot_position(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    filename="spherical_joint_test.png",
+    SAVE_FIGURE=False,
+):
+
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    fig = plt.figure(figsize=(10, 10), frameon=True, dpi=150)
+    ax = fig.add_subplot(111)
+
+    ax.grid(which="minor", color="k", linestyle="--")
+    ax.grid(which="major", color="k", linestyle="-")
+    ax.plot(
+        position_of_rod1[:, 0, -1],
+        position_of_rod1[:, 1, -1],
+        "r-",
+        linewidth=BEAM_WIDTH,
+        label="rod1",
+    )
+    ax.plot(
+        position_of_rod2[:, 0, -1],
+        position_of_rod2[:, 1, -1],
+        c=to_rgb("xkcd:bluish"),
+        linewidth=BEAM_WIDTH,
+        label="rod2",
+    )
+
+    fig.legend(prop={"size": 20})
+
+    plt.show()
+
+    if SAVE_FIGURE:
+        fig.savefig(filename)
+
+
+def plot_orientation(title, time, directors):
+    quat = []
+    for t in range(len(time)):
+        quat_t = Rotation.from_matrix(directors[t].T).as_quat()
+        quat.append(quat_t)
+    quat = np.array(quat)
+
+    plt.figure(num=title)
+    plt.plot(time, quat[:, 0], label="x")
+    plt.plot(time, quat[:, 1], label="y")
+    plt.plot(time, quat[:, 2], label="z")
+    plt.plot(time, quat[:, 3], label="w")
+    plt.title(title)
+    plt.legend()
+    plt.xlabel("Time [s]")
+    plt.ylabel("Quaternion")
+    plt.show()
+
+
+def plot_video(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    video_name="video.mp4",
+    margin=0.2,
+    fps=15,
+):  # (time step, x/y/z, node)
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    print("plot video")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure(figsize=(10, 8), frameon=True, dpi=150)
+    with writer.saving(fig, video_name, 100):
+        for time in range(1, len(time)):
+            fig.clf()
+            ax = plt.axes(projection="3d")  # fig.add_subplot(111)
+            ax.grid(which="minor", color="k", linestyle="--")
+            ax.grid(which="major", color="k", linestyle="-")
+            ax.plot(
+                position_of_rod1[time, 0],
+                position_of_rod1[time, 1],
+                position_of_rod1[time, 2],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            ax.plot(
+                position_of_rod2[time, 0],
+                position_of_rod2[time, 1],
+                position_of_rod2[time, 2],
+                color=to_rgb("xkcd:bluish"),
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+
+            ax.set_xlim(-0.25, 0.25)
+            ax.set_ylim(-0.25, 0.25)
+            ax.set_zlim(0, 0.4)
+            writer.grab_frame()
+
+
+def plot_video_xy(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    video_name="video.mp4",
+    margin=0.2,
+    fps=15,
+):  # (time step, x/y/z, node)
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    print("plot video xy")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure()
+    plt.axis("equal")
+    with writer.saving(fig, video_name, 100):
+        for time in range(1, len(time)):
+            fig.clf()
+            plt.plot(
+                position_of_rod1[time, 0],
+                position_of_rod1[time, 1],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            plt.plot(
+                position_of_rod2[time, 0],
+                position_of_rod2[time, 1],
+                color=to_rgb("xkcd:bluish"),
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+
+            plt.xlim([-0.25, 0.25])
+            plt.ylim([-0.25, 0.25])
+            writer.grab_frame()
+
+
+def plot_video_xz(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    video_name="video.mp4",
+    margin=0.2,
+    fps=15,
+):  # (time step, x/y/z, node)
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+
+    print("plot video xz")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure()
+    plt.axis("equal")
+    with writer.saving(fig, video_name, 100):
+        for time in range(1, len(time)):
+            fig.clf()
+            plt.plot(
+                position_of_rod1[time, 0],
+                position_of_rod1[time, 2],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            plt.plot(
+                position_of_rod2[time, 0],
+                position_of_rod2[time, 2],
+                color=to_rgb("xkcd:bluish"),
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+
+            plt.xlim([-0.25, 0.25])
+            plt.ylim([0, 0.41])
+            writer.grab_frame()
+
+
+def plot_video_three_rods(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    plot_params_rod3,
+    video_name="video.mp4",
+    fps=15,
+):
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+    position_of_rod3_all = _position_collections_from_input(plot_params_rod3)
+    rod3_colors = ["g", "m", "c", "y", "k"]
+
+    print("plot video")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure(figsize=(10, 8), frameon=True, dpi=150)
+    with writer.saving(fig, video_name, 100):
+        for frame_id in range(1, len(time)):
+            fig.clf()
+            ax = plt.axes(projection="3d")
+            ax.plot(
+                position_of_rod1[frame_id, 0],
+                position_of_rod1[frame_id, 1],
+                position_of_rod1[frame_id, 2],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            ax.plot(
+                position_of_rod2[frame_id, 0],
+                position_of_rod2[frame_id, 1],
+                position_of_rod2[frame_id, 2],
+                color="b",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+            for rod_idx, position_of_rod3 in enumerate(position_of_rod3_all):
+                ax.plot(
+                    position_of_rod3[frame_id, 0],
+                    position_of_rod3[frame_id, 1],
+                    position_of_rod3[frame_id, 2],
+                    color=rod3_colors[rod_idx % len(rod3_colors)],
+                    marker="o",
+                    markersize=DOT_SIZE,
+                    linewidth=BEAM_WIDTH,
+                    label=f"rod3_{rod_idx + 1}",
+                )
+
+            ax.set_xlim(*ZOOM_XY_XLIM)
+            ax.set_ylim(*ZOOM_XY_YLIM)
+            ax.set_zlim(*ZOOM_3D_ZLIM)
+            writer.grab_frame()
+
+
+def plot_video_xy_three_rods(
+    plot_params_rod1: dict,
+    plot_params_rod2: dict,
+    plot_params_rod3,
+    video_name="video_xy.mp4",
+    fps=15,
+):
+    import matplotlib.animation as manimation
+
+    time = plot_params_rod1["time"]
+    position_of_rod1 = np.array(plot_params_rod1["position"])
+    position_of_rod2 = np.array(plot_params_rod2["position"])
+    position_of_rod3_all = _position_collections_from_input(plot_params_rod3)
+    rod3_colors = ["g", "m", "c", "y", "k"]
+
+    print("plot video xy")
+    FFMpegWriter = manimation.writers["ffmpeg"]
+    metadata = dict(title="Movie Test", artist="Matplotlib", comment="Movie support!")
+    writer = FFMpegWriter(fps=fps, metadata=metadata)
+    fig = plt.figure()
+    plt.axis("equal")
+    with writer.saving(fig, video_name, 100):
+        for frame_id in range(1, len(time)):
+            fig.clf()
+            plt.plot(
+                position_of_rod1[frame_id, 0],
+                position_of_rod1[frame_id, 1],
+                color="r",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod1",
+            )
+            plt.plot(
+                position_of_rod2[frame_id, 0],
+                position_of_rod2[frame_id, 1],
+                color="b",
+                marker="o",
+                markersize=DOT_SIZE,
+                linewidth=BEAM_WIDTH,
+                label="rod2",
+            )
+            for rod_idx, position_of_rod3 in enumerate(position_of_rod3_all):
+                plt.plot(
+                    position_of_rod3[frame_id, 0],
+                    position_of_rod3[frame_id, 1],
+                    color=rod3_colors[rod_idx % len(rod3_colors)],
+                    marker="o",
+                    markersize=DOT_SIZE,
+                    linewidth=BEAM_WIDTH,
+                    label=f"rod3_{rod_idx + 1}",
+                )
+
+            plt.xlim(ZOOM_XY_XLIM)
+            plt.ylim(ZOOM_XY_YLIM)
+            writer.grab_frame()
+
+
