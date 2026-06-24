@@ -74,28 +74,20 @@ class AppConfig:
 # Config loading / saving
 # ---------------------------------------------------------------------------
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera-config.yaml")
 
-def load_config(file_name="camera-config.yaml"):
-    """Load AppConfig dynamically relative to the script's directory."""
-    
-    # 2. Dynamically glue the script's directory to whatever file_name is passed
-    full_path = os.path.join(SCRIPT_DIR, file_name)
-    
-    # 3. Use that full_path for checking and opening
-    if not os.path.exists(full_path):
-        raise FileNotFoundError(f"Config file not found: {full_path}")
-        
-    with open(full_path, "r") as f:
-        raw = yaml.safe_load(f)
-        
-    return AppConfig(
-        calibration=CalibrationConfig(**raw["calibration"]),
-        circles=CircleDetectionConfig(**raw["hough_circles"]),
-        presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},)
 
-cfg = load_config()
-
+def load_config() -> AppConfig:
+	"""Load AppConfig from camera-config.yaml."""
+	if not os.path.exists(_config_path):
+		raise FileNotFoundError(f"Config file not found: {_config_path}")
+	with open(_config_path, "r") as f:
+		raw = yaml.safe_load(f)
+	return AppConfig(
+		calibration=CalibrationConfig(**raw["calibration"]),
+		circles=CircleDetectionConfig(**raw["hough_circles"]),
+		presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},
+	)
 
 
 def save_config(cfg: AppConfig) -> None:
@@ -127,34 +119,19 @@ def save_config(cfg: AppConfig) -> None:
 			for name, preset in cfg.presets.items()
 		},
 	}
-	full_path = os.path.join(SCRIPT_DIR, "camera-config.yaml")
-	with open(full_path, "w") as f:
+	with open(_config_path, "w") as f:
 		yaml.dump(data, f, default_flow_style=False)
 
 
-
-# def load_config():
-# 	"""Load AppConfig from camera-config.yaml."""
-# 	if not os.path.exists(_config_path):
-# 		raise FileNotFoundError(f"Config file not found: {_config_path}")
-# 	with open(_config_path, "r") as f:
-# 		raw = yaml.safe_load(f)
-# 	return AppConfig(
-# 		calibration=CalibrationConfig(**raw["calibration"]),
-# 		circles=CircleDetectionConfig(**raw["hough_circles"]),
-# 		presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},
-# 	)
-
-
-
 # ---------------------------------------------------------------------------
-# Image processing functions
+# Module-level config instance (loaded once at import time)
 # ---------------------------------------------------------------------------
+
+cfg = load_config()
 
 
 def _resolve_threshold(value, fallback):
 	return fallback if value is None else value
-
 
 
 def _build_hue_range(hue, hue_margin):
@@ -165,30 +142,6 @@ def _build_hue_range(hue, hue_margin):
 	if upper > 180:
 		return (lower, 180), (0, upper - 180)
 	return (lower, upper), (lower, upper)
-
-def create_red_mask(
-	frame,
-	lower_red1=None,
-	upper_red1=None,
-	lower_red2=None,
-	upper_red2=None,
-):
-	"""Create a binary mask for red pixels in a BGR frame."""
-	hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-	lower_red1 = _resolve_threshold(lower_red1, cfg.calibration.red_lower_1)
-	upper_red1 = _resolve_threshold(upper_red1, cfg.calibration.red_upper_1)
-	lower_red2 = _resolve_threshold(lower_red2, cfg.calibration.red_lower_2)
-	upper_red2 = _resolve_threshold(upper_red2, cfg.calibration.red_upper_2)
-	masks = [cv2.inRange(hsv, lower_red1, upper_red1)]
-	if not (np.all(lower_red2 == 0) and np.all(upper_red2 == 0)):
-		masks.append(cv2.inRange(hsv, lower_red2, upper_red2))
-
-	mask = masks[0]
-	for extra_mask in masks[1:]:
-		mask = cv2.bitwise_or(mask, extra_mask)
-	return mask
-
-
 
 
 def apply_calibration_preset() -> dict:
@@ -224,6 +177,27 @@ def sample_hsv_at_point(frame, point):
 	return tuple(int(value) for value in hsv_frame[y, x])
 
 
+def create_red_mask(
+	frame,
+	lower_red1=None,
+	upper_red1=None,
+	lower_red2=None,
+	upper_red2=None,
+):
+	"""Create a binary mask for red pixels in a BGR frame."""
+	hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+	lower_red1 = _resolve_threshold(lower_red1, cfg.calibration.red_lower_1)
+	upper_red1 = _resolve_threshold(upper_red1, cfg.calibration.red_upper_1)
+	lower_red2 = _resolve_threshold(lower_red2, cfg.calibration.red_lower_2)
+	upper_red2 = _resolve_threshold(upper_red2, cfg.calibration.red_upper_2)
+	masks = [cv2.inRange(hsv, lower_red1, upper_red1)]
+	if not (np.all(lower_red2 == 0) and np.all(upper_red2 == 0)):
+		masks.append(cv2.inRange(hsv, lower_red2, upper_red2))
+
+	mask = masks[0]
+	for extra_mask in masks[1:]:
+		mask = cv2.bitwise_or(mask, extra_mask)
+	return mask
 
 
 def calibrate_from_blob(
@@ -317,12 +291,13 @@ def find_red_blob_data(frame, min_area: int = None, max_area: int = None):
 def detect_circles(frame, dp=None, min_dist=None, param1=None,
                    param2=None, min_radius=None, max_radius=None):
     """Detect circles in the frame using Hough Circle Transform."""
-    dp         = cfg.circles.dp         if dp         is None else dp
-    min_dist   = cfg.circles.min_dist   if min_dist   is None else min_dist
-    param1     = cfg.circles.param1     if param1     is None else param1
-    param2     = cfg.circles.param2     if param2     is None else param2
-    min_radius = cfg.circles.min_radius if min_radius is None else min_radius
-    max_radius = cfg.circles.max_radius if max_radius is None else max_radius
+    dp         = dp         or cfg.circles.dp
+    min_dist   = min_dist   or cfg.circles.min_dist
+    param1     = param1     or cfg.circles.param1
+    param2     = param2     or cfg.circles.param2
+    min_radius = min_radius or cfg.circles.min_radius
+    max_radius = max_radius or cfg.circles.max_radius
+    """Detect circles in the frame using Hough Circle Transform."""
     if len(frame.shape) == 3:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     else:
@@ -582,28 +557,31 @@ def draw_measurement(frame, point1, point2):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1, cv2.LINE_AA)
     return frame
 
-# def load_config():
-# 	"""Load the camera configuration from the YAML file."""
-# 	global cfg
-# 	with open(SCRIPT_DIR, "r") as f:
-# 		cfg = yaml.safe_load(f)
 
 
 def create_circle_trackbars(window_name="Circle Tuning"):
     """Create a separate window with trackbars for Hough Circle parameters."""
     cv2.namedWindow(window_name)
     cv2.createTrackbar("dp",         window_name, cfg.circles.dp,         5,   lambda v: None)
-    cv2.createTrackbar("min_dist",   window_name, cfg.circles.min_dist,   200, lambda v: None)
-    cv2.createTrackbar("param1",     window_name, cfg.circles.param1,     200, lambda v: None)
-    cv2.createTrackbar("param2",     window_name, cfg.circles.param2,     200, lambda v: None)
-    cv2.createTrackbar("min_radius", window_name, cfg.circles.min_radius, 200, lambda v: None)
-    cv2.createTrackbar("max_radius", window_name, cfg.circles.max_radius, 200, lambda v: None)
-    # cv2.createButton("Load camera config", lambda: load_config(), None, cv2.QT_PUSH_BUTTON, 1)
-    # cv2.createButton("Save Config", lambda: save_config(cfg), None, cv2.QT_PUSH_BUTTON, 1)
+    cv2.createTrackbar("min_dist",   window_name, cfg.circles.min_dist,   500, lambda v: None)
+    cv2.createTrackbar("param1",     window_name, cfg.circles.param1,     500, lambda v: None)
+    cv2.createTrackbar("param2",     window_name, cfg.circles.param2,     500, lambda v: None)
+    cv2.createTrackbar("min_radius", window_name, cfg.circles.min_radius, 500, lambda v: None)
+    cv2.createTrackbar("max_radius", window_name, cfg.circles.max_radius, 500, lambda v: None)
 
 
 def get_circle_params_from_trackbars(window_name="Circle Tuning"):
-    """Read current trackbar values and return them as a dict."""
+    """Read current trackbar values and return them as a dict.
+    Falls back to cfg values if the window does not exist yet."""
+    if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+        return {
+            "dp":         cfg.circles.dp,
+            "min_dist":   cfg.circles.min_dist,
+            "param1":     cfg.circles.param1,
+            "param2":     cfg.circles.param2,
+            "min_radius": cfg.circles.min_radius,
+            "max_radius": cfg.circles.max_radius,
+        }
     return {
         "dp":         max(1, cv2.getTrackbarPos("dp",         window_name)),
         "min_dist":   max(1, cv2.getTrackbarPos("min_dist",   window_name)),

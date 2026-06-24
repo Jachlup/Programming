@@ -14,16 +14,12 @@ from processing import (
 	apply_calibration_preset,
 	find_red_blob_data,
 	get_blob_at_point,
-	load_config,
 	sample_hsv_at_point,
 	show_red_mask_only,
 	detect_circles,
 	draw_circles,
 	create_circle_trackbars,
-	get_circle_params_from_trackbars,
-	save_config,
-	cfg
-
+	get_circle_params_from_trackbars
 )
 # Default runtime switches (can be toggled with keys)
 # Press 'm' in the window to toggle mask-only view on/off
@@ -32,13 +28,19 @@ CALIBRATION_MODE = False
 MEASURE_MODE = False
 
 
-
 def on_mouse_click(event, x, y, flags, state):
     """Pick the blob under the cursor and store it for calibration, or measure distance."""
-
     if event != cv2.EVENT_LBUTTONDOWN:
         return
 
+    # measurement mode — handled independently from calibration
+    if state["measure_mode"]:
+        points = state["measure_points"]
+        if len(points) < 2:
+            points.append((x, y))
+        else:
+            state["measure_points"] = [(x, y)]  # reset and start fresh
+        return
 
     # existing calibration logic
     if not state["calibration_mode"]:
@@ -71,6 +73,9 @@ def main():
 
 	try:
 		while True:
+
+
+
 			color_frame = get_frame(pipeline)
 			if color_frame is None:
 				continue
@@ -108,7 +113,12 @@ def main():
 				CALIBRATION_MODE = not CALIBRATION_MODE
 				state["calibration_mode"] = CALIBRATION_MODE
 				if CALIBRATION_MODE:
-					load_config()
+					preset = apply_calibration_preset()
+					print(
+						"Wide red preset loaded: "
+						f"red1={preset['lower_red1']}..{preset['upper_red1']} "
+						f"red2={preset['lower_red2']}..{preset['upper_red2']}"
+					)
 				print(f"Calibration mode: {'ON' if CALIBRATION_MODE else 'OFF'}")
 			if key == ord("x"):
 				state["selected_blob"] = None
@@ -121,7 +131,6 @@ def main():
 
 
 	finally:
-		save_config(cfg)
 		stop_pipeline(pipeline)
 		cv2.destroyAllWindows()
 
