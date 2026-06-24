@@ -22,7 +22,8 @@ from processing import (
 	get_circle_params_from_trackbars,
     find_closest_blob_center,
     update_and_draw_tracked_points,
-	compute_and_draw_artificial_point
+	compute_and_draw_artificial_point,
+	filter_and_collect_points
 )
 from commands import execute_command
 
@@ -116,11 +117,22 @@ def main():
 			
 			# --- Real-time tracking pipeline step ---
 			display_frame = update_and_draw_tracked_points(display_frame, blobs, state["tracked_points"])
-			
+
 			art_pt, display_frame = compute_and_draw_artificial_point(display_frame, state["tracked_points"], angle_deg=25)
 			state["artificial_point"] = art_pt
 			# Future applications can read the tracked list right here!
 			# e.g., coordinate_data = state["tracked_points"]
+
+			detected_circles_list = detect_circles(red_mask_frame, **circle_params)
+			
+			final_array, display_frame = filter_and_collect_points(
+				blobs=state["blobs"], 
+				circles=detected_circles_list, 
+				artificial_point=state["artificial_point"],
+				frame=display_frame  # Pass display_frame to get visual green rings on screen
+			)
+			
+			state["final_points_array"] = final_array
 
 			cv2.imshow("Red Blob Detector", display_frame)
 

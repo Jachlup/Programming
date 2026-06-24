@@ -697,3 +697,56 @@ def compute_and_draw_artificial_point(frame, tracked_points, angle_deg=25):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
 
     return art_point, frame
+
+def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
+    """
+    Checks which regular blob centers are inside any detected circles.
+    Collects matching points and appends the artificial point to a single array.
+    
+    Optionally draws a distinct visual ring around validated points if a frame is provided.
+    """
+    collected_points = []
+    
+    # 1. Safely parse and normalize circle formats from cv2.HoughCircles
+    valid_circles = []
+    if circles is not None:
+        if isinstance(circles, np.ndarray):
+            # HoughCircles often returns shape (1, N, 3)
+            valid_circles = circles[0] if len(circles.shape) == 3 else circles
+        else:
+            valid_circles = circles
+
+    # 2. Extract centers from detected blobs
+    centers = [blob["center"] for blob in blobs] if blobs else []
+
+    # 3. Check each blob center against all detected circles
+    for pt in centers:
+        px, py = pt
+        is_inside = False
+        
+        for circle in valid_circles:
+            cx, cy, r = circle
+            # Compare squared distance to avoid computationally expensive square roots
+            squared_dist = (px - cx) ** 2 + (py - cy) ** 2
+            if squared_dist <= r ** 2:
+                is_inside = True
+                break  # Point is verified inside at least one circle; stop checking others
+        
+        if is_inside:
+            point_tuple = (int(px), int(py))
+            collected_points.append(point_tuple)
+            
+            # Optional: Visual confirmation overlay (Green double ring)
+            if frame is not None:
+                cv2.circle(frame, point_tuple, 14, (255, 0, 0), 1, cv2.LINE_AA)
+
+    # 4. Always append the artificial point if it has been calculated
+    if artificial_point is not None:
+        collected_points.append(artificial_point)
+        
+        # Optional: Visual confirmation overlay for the artificial point
+        if frame is not None:
+            cv2.circle(frame, artificial_point, 14, (255, 255, 0), 1, cv2.LINE_AA)
+
+    # Convert to a standard NumPy array for downstream data applications
+    return np.array(collected_points, dtype=np.int32), frame

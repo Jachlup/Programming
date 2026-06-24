@@ -34,6 +34,12 @@ def cmd_help(args, state):
     for command in COMMANDS.values():
         print(f"{command.name:<15} {command.description}")
 
+def cmd_points_array(args, state):
+    points_array = state.get("final_points_array", [])
+    print("Final Points Array:")
+    for point in points_array:
+        print(point)
+    print(f"Total points: {len(points_array)}")
 
 
 COMMANDS = {
@@ -58,6 +64,12 @@ COMMANDS = {
         name="help",
         description="Show available commands",
         handler=cmd_help
+    ),
+
+    "points_array": Command(
+        name="points_array",
+        description="Display the final points array",
+        handler=cmd_points_array
     )
 }
 
