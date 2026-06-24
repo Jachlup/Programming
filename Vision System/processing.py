@@ -565,7 +565,7 @@ def create_circle_trackbars(window_name="Circle Tuning"):
     cv2.createTrackbar("dp",         window_name, cfg.circles.dp,         5,   lambda v: None)
     cv2.createTrackbar("min_dist",   window_name, cfg.circles.min_dist,   500, lambda v: None)
     cv2.createTrackbar("param1",     window_name, cfg.circles.param1,     500, lambda v: None)
-    cv2.createTrackbar("param2",     window_name, cfg.circles.param2,     500, lambda v: None)
+    cv2.createTrackbar("param2",     window_name, cfg.circles.param2,     50, lambda v: None)
     cv2.createTrackbar("min_radius", window_name, cfg.circles.min_radius, 500, lambda v: None)
     cv2.createTrackbar("max_radius", window_name, cfg.circles.max_radius, 500, lambda v: None)
 

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable
-
+from processing import save_config, cfg
 
 @dataclass
 class Command:
@@ -13,8 +13,18 @@ def cmd_check(args, state):
     print("Works")
 
 def cmd_save(args, state):
-    print("Saving config...")
-
+    # sync trackbar values into cfg before saving
+    from processing import cfg
+    params = state.get("circle_params")
+    if params:
+        cfg.circles.dp         = params["dp"]
+        cfg.circles.min_dist   = params["min_dist"]
+        cfg.circles.param1     = params["param1"]
+        cfg.circles.param2     = params["param2"]
+        cfg.circles.min_radius = params["min_radius"]
+        cfg.circles.max_radius = params["max_radius"]
+    save_config(cfg)
+    print("Config saved.")
 
 def cmd_show_config(args, state):
     print(state)

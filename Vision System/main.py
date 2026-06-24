@@ -98,6 +98,7 @@ def main():
 			display_frame = draw_centers_with_positions(display_frame, centers)
 			display_frame = draw_blob_calibration_info(display_frame, state["selected_blob"])
 			circle_params = get_circle_params_from_trackbars()
+			state["circle_params"] = circle_params
 			display_frame = draw_circles(display_frame, detect_circles(red_mask_frame, **circle_params))
 			
 
