@@ -21,6 +21,7 @@ from processing import (
 	create_circle_trackbars,
 	get_circle_params_from_trackbars
 )
+from commands import execute_command
 # Default runtime switches (can be toggled with keys)
 # Press 'm' in the window to toggle mask-only view on/off
 SHOW_MASK_ONLY = False
@@ -127,6 +128,9 @@ def main():
 				state["measure_mode"] = MEASURE_MODE
 				state["measure_points"] = []  # reset measurement points when toggling
 				print(f"Measuring mode: {'ON' if MEASURE_MODE else 'OFF'}")
+			if key == ord("t"):
+				command = input("Command: ")
+				execute_command(command, state)
 
 
 

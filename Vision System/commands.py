@@ -9,6 +9,8 @@ class Command:
     handler: Callable
 
 
+def cmd_check(args, state):
+    print("Works")
 
 def cmd_save(args, state):
     print("Saving config...")
@@ -25,6 +27,11 @@ def cmd_help(args, state):
 
 
 COMMANDS = {
+    "check": Command(
+        name="check",
+        description="Check if the command system is working",
+        handler=cmd_check
+    ),
     "save": Command(
         name="save",
         description="Save configuration to yaml",
