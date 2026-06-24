@@ -566,7 +566,7 @@ def create_circle_trackbars(window_name="Circle Tuning"):
     cv2.createTrackbar("min_dist",   window_name, cfg.circles.min_dist,   500, lambda v: None)
     cv2.createTrackbar("param1",     window_name, cfg.circles.param1,     500, lambda v: None)
     cv2.createTrackbar("param2",     window_name, cfg.circles.param2,     50, lambda v: None)
-    cv2.createTrackbar("min_radius", window_name, cfg.circles.min_radius, 500, lambda v: None)
+    cv2.createTrackbar("min_radius", window_name, cfg.circles.min_radius, 100, lambda v: None)
     cv2.createTrackbar("max_radius", window_name, cfg.circles.max_radius, 500, lambda v: None)
 
 
@@ -651,3 +651,49 @@ def update_and_draw_tracked_points(frame, blobs, tracked_points, max_distance=50
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
 
     return frame
+
+def compute_and_draw_artificial_point(frame, tracked_points, angle_deg=25):
+    """
+    Calculates an artificial point by pivoting the vector from tracked_points[0] 
+    to tracked_points[1] by `angle_deg` clockwise around tracked_points[0].
+    
+    Draws the geometric visualization and returns the artificial point coordinates.
+    """
+    # We need at least 2 tracked points to form a line and a distance vector
+    if len(tracked_points) < 2:
+        return None, frame
+
+    p0 = tracked_points[0]  # Center of rotation (Pivot)
+    p1 = tracked_points[1]  # Target vector point
+
+    # Convert degrees to radians
+    # In an image coordinate space (Y down), positive angle = clockwise rotation
+    theta = np.radians(angle_deg)
+    cos_t = np.cos(theta)
+    sin_t = np.sin(theta)
+
+    # Get relative vector components
+    dx = p1[0] - p0[0]
+    dy = p1[1] - p0[1]
+
+    # Calculate rotated coordinates relative to the pivot (p0)
+    x_art = int(round(p0[0] + dx * cos_t - dy * sin_t))
+    y_art = int(round(p0[1] + dx * sin_t + dy * cos_t))
+    art_point = (x_art, y_art)
+
+    # --- Visualizations ---
+    # 1. Draw a subtle baseline connecting the original two tracked points
+    cv2.line(frame, p0, p1, (180, 180, 180), 1, cv2.LINE_AA)
+    
+    # 2. Draw a thick Magenta line indicating the pivoted offset arm
+    cv2.line(frame, p0, art_point, (255, 0, 255), 2, cv2.LINE_AA)
+    
+    # 3. Draw the Artificial Point (Solid Magenta circle with a white border)
+    cv2.circle(frame, art_point, 6, (255, 0, 255), -1)
+    cv2.circle(frame, art_point, 10, (255, 255, 255), 1, cv2.LINE_AA)
+    
+    # 4. Label the artificial point
+    cv2.putText(frame, "ART_PT", (x_art + 14, y_art + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
+
+    return art_point, frame

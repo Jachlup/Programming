@@ -20,9 +20,9 @@ from processing import (
 	draw_circles,
 	create_circle_trackbars,
 	get_circle_params_from_trackbars,
-    # --- New Tracking Imports ---
     find_closest_blob_center,
-    update_and_draw_tracked_points
+    update_and_draw_tracked_points,
+	compute_and_draw_artificial_point
 )
 from commands import execute_command
 
@@ -82,7 +82,8 @@ def main():
 			"calibration_mode": False,
 			"measure_mode": False,
 			"measure_points": [],
-			"tracked_points": [] } 
+			"tracked_points": [],
+			"artificial_point": None }
 			
 	cv2.namedWindow("Red Blob Detector")
 	cv2.setMouseCallback("Red Blob Detector", on_mouse_click, state)
@@ -116,6 +117,8 @@ def main():
 			# --- Real-time tracking pipeline step ---
 			display_frame = update_and_draw_tracked_points(display_frame, blobs, state["tracked_points"])
 			
+			art_pt, display_frame = compute_and_draw_artificial_point(display_frame, state["tracked_points"], angle_deg=25)
+			state["artificial_point"] = art_pt
 			# Future applications can read the tracked list right here!
 			# e.g., coordinate_data = state["tracked_points"]
 

@@ -2,34 +2,34 @@ calibration:
   area_low_ratio: 0.45
   area_up_ratio: 0.45
   hue_margin: 10
-  max_area: 1333
-  min_area: 505
+  max_area: 393
+  min_area: 149
   preset: wide
   red_lower_1:
-  - 169
-  - 190
-  - 38
-  red_lower_2:
   - 0
-  - 190
-  - 38
+  - 177
+  - 23
+  red_lower_2:
+  - 170
+  - 177
+  - 23
   red_upper_1:
+  - 10
+  - 255
+  - 143
+  red_upper_2:
   - 180
   - 255
-  - 158
-  red_upper_2:
-  - 9
-  - 255
-  - 158
+  - 143
   sat_margin: 60
   val_margin: 60
 hough_circles:
   dp: 1
   max_radius: 20
-  min_dist: 40
+  min_dist: 10
   min_radius: 2
-  param1: 200
-  param2: 10
+  param1: 20
+  param2: 9
 presets:
   wide:
     red_lower_1:

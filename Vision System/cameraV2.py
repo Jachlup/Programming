@@ -5,7 +5,7 @@ from __future__ import annotations
 import pyrealsense2 as rs
 
 
-def create_pipeline(width: int = 1280, height: int = 720, fps: int = 30) -> rs.pipeline:
+def create_pipeline(width: int = 640, height: int = 480, fps: int = 60) -> rs.pipeline:
 	"""Create and start the RealSense pipeline for the color stream."""
 	pipeline = rs.pipeline()
 	config = rs.config()
