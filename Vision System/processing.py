@@ -590,3 +590,64 @@ def get_circle_params_from_trackbars(window_name="Circle Tuning"):
         "min_radius": cv2.getTrackbarPos("min_radius", window_name),
         "max_radius": cv2.getTrackbarPos("max_radius", window_name),
     }
+
+def find_closest_blob_center(click_point, blobs):
+    """Find and return the closest red blob center to the clicked coordinate."""
+    if not blobs:
+        return None
+    
+    x, y = click_point
+    centers = [blob["center"] for blob in blobs]
+    
+    # Calculate Euclidean distance to all detected centers
+    distances = [np.sqrt((x - c[0])**2 + (y - c[1])**2) for c in centers]
+    min_idx = np.argmin(distances)
+    
+    return centers[min_idx]
+
+
+def update_and_draw_tracked_points(frame, blobs, tracked_points, max_distance=50):
+    """
+    Tracks selected points frame-by-frame by linking them to the closest current 
+    red blob center. Updates tracked_points in-place and draws tracking overlays.
+    """
+    if not tracked_points:
+        return frame
+
+    current_centers = [blob["center"] for blob in blobs]
+    updated_points = []
+
+    for pt in tracked_points:
+        if not current_centers:
+            # If no blobs are detected this frame, retain last known position
+            updated_points.append(pt)
+            continue
+
+        # Find the closest currently alive blob to our tracked point
+        distances = [np.sqrt((pt[0] - c[0])**2 + (pt[1] - c[1])**2) for c in current_centers]
+        min_idx = np.argmin(distances)
+        min_dist = distances[min_idx]
+
+        # max_distance guard prevents tracking from accidentally jumping to a completely different blob
+        if min_dist < max_distance:
+            matched_center = current_centers[min_idx]
+            updated_points.append(matched_center)
+            # Pop to ensure two tracked targets don't merge onto the exact same physical blob
+            current_centers.pop(min_idx)
+        else:
+            # Blob temporarily occluded/lost; retain position
+            updated_points.append(pt)
+
+    # Modify the list in-place to update main.py's runtime state dictionary
+    tracked_points.clear()
+    tracked_points.extend(updated_points)
+
+    # Render tracking markers onto the display image
+    for idx, pt in enumerate(tracked_points):
+        # Draw target reticle (Cyan / Yellow inner ring)
+        cv2.circle(frame, pt, 10, (255, 255, 0), 2)
+        cv2.circle(frame, pt, 3, (0, 255, 255), -1)
+        cv2.putText(frame, f"ID_{idx}", (pt[0] + 12, pt[1] - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
+
+    return frame
