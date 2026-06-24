@@ -1,5 +1,5 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+  "python.defaultInterpreterPath": "${workspaceFolder}\\..\\.venv\\Scripts\\python.exe",
   "python.terminal.activateEnvironment": true,
   "terminal.integrated.profiles.windows": {
     "PowerShell (Vision System)": {
@@ -9,7 +9,7 @@
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        ". .\\.venv\\Scripts\\Activate.ps1"
+        ". \\..\\.venv\\Scripts\\Activate.ps1"
       ]
     }
   },

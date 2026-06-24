@@ -10,6 +10,7 @@ from Joint_postprocessing import (
     plot_video_xz,
 )
 
+from FinRay_sim_utils import *
 
 
 class GripperSimulator(
@@ -22,44 +23,6 @@ class GripperSimulator(
 ):
     pass
 
-
-class NodeForce(ea.NoForces):
-    def __init__(self, force, node_idx: int):
-        super().__init__()
-        self.force = np.asarray(force, dtype=float)
-        self.node_idx = int(node_idx)
-
-    def apply_forces(self, system, time=np.float64(0.0)) -> None:
-        system.external_forces[..., self.node_idx] += self.force
-
-
-def endpoints_to_vector_and_length(node_a, node_b):
-    direction_vector = node_b - node_a
-    length = np.linalg.norm(direction_vector)
-    if length == 0.0:
-        raise ValueError("Rod endpoints must be different points.")
-    direction = direction_vector / length
-    return node_a, direction, length
-
-
-def export_node_positions_csv(output_path: Path, rods, rod_labels):
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="") as csv_file:
-        writer = csv.writer(csv_file)
-        writer.writerow(["rod", "node_index", "x", "y", "z"])
-        for rod, label in zip(rods, rod_labels):
-            positions = rod.position_collection
-            node_count = positions.shape[1]
-            for node_idx in range(node_count):
-                writer.writerow(
-                    [
-                        label,
-                        node_idx,
-                        float(positions[0, node_idx]),
-                        float(positions[1, node_idx]),
-                        float(positions[2, node_idx]),
-                    ]
-                )
 
 
 FOLDER_NAME = "CSV"
@@ -206,7 +169,11 @@ gripper_Sim.add_forcing_to(force_point).using(
 )
 
 # add damping
+
+
 damping_constant = 5e-2
+
+
 dt = 5e-5
 gripper_Sim.dampen(rod1).using(
     ea.AnalyticalLinearDamper,
