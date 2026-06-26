@@ -7,11 +7,11 @@ calibration:
   preset: wide
   red_lower_1:
   - 0
-  - 177
+  - 150
   - 23
   red_lower_2:
   - 170
-  - 177
+  - 150
   - 23
   red_upper_1:
   - 10
@@ -27,7 +27,7 @@ hough_circles:
   dp: 1
   max_radius: 20
   min_dist: 10
-  min_radius: 2
+  min_radius: 7
   param1: 20
   param2: 9
 presets:
@@ -48,3 +48,6 @@ presets:
     - 180
     - 255
     - 255
+force_node:
+  force_magnitude: 0
+  node_number: 1

@@ -23,7 +23,9 @@ from processing import (
     find_closest_blob_center,
     update_and_draw_tracked_points,
 	compute_and_draw_artificial_point,
-	filter_and_collect_points
+	filter_and_collect_points,
+	create_node_trackbars,
+	get_node_params_from_trackbars
 )
 from commands import execute_command
 
@@ -89,7 +91,7 @@ def main():
 	cv2.namedWindow("Red Blob Detector")
 	cv2.setMouseCallback("Red Blob Detector", on_mouse_click, state)
 	create_circle_trackbars()
-
+	create_node_trackbars()
 	try:
 		while True:
 			color_frame = get_frame(pipeline)
@@ -131,6 +133,10 @@ def main():
 				artificial_point=state["artificial_point"],
 				frame=display_frame  # Pass display_frame to get visual green rings on screen
 			)
+
+			node_params = get_node_params_from_trackbars()
+
+
 			
 			state["final_points_array"] = final_array
 
@@ -159,6 +165,19 @@ def main():
 			if key == ord("t"):
 				command = input("Command: ")
 				execute_command(command, state)
+			if key == ord("s"):
+				# 1. Grab the latest trackbar data
+				node_params = get_node_params_from_trackbars()
+				
+				# 2. Update the active configuration instance directly
+				from processing import cfg
+				cfg.force_node.node_number = node_params["node_number"]
+				cfg.force_node.force_magnitude = float(node_params["force_magnitude"])
+				
+				# 3. Call your newly unified save function
+				from processing import save_config
+				save_config(cfg)
+				print(f"Configuration and Force Node data saved successfully.")
 
 	finally:
 		stop_pipeline(pipeline)

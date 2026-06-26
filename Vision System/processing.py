@@ -58,13 +58,17 @@ class CircleDetectionConfig:
 	min_radius: int
 	max_radius: int
 
+@dataclass
+class ForcePointConfig:
+	node_number: int
+	force_magnitude: float
 
 @dataclass
 class AppConfig:
 	calibration: CalibrationConfig
 	circles: CircleDetectionConfig
 	presets: dict
-
+	force_node: ForcePointConfig
 	def active_preset(self) -> HsvPreset:
 		"""Return the currently selected HsvPreset."""
 		return self.presets[self.calibration.preset]
@@ -78,15 +82,19 @@ _config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera-
 
 
 def load_config() -> AppConfig:
-	"""Load AppConfig from camera-config.yaml."""
 	if not os.path.exists(_config_path):
 		raise FileNotFoundError(f"Config file not found: {_config_path}")
 	with open(_config_path, "r") as f:
 		raw = yaml.safe_load(f)
+	
+	# Handle missing key seamlessly for backwards-compatibility
+	force_raw = raw.get("force_node", {"node_number": 1, "force_magnitude": 0.0})
+
 	return AppConfig(
 		calibration=CalibrationConfig(**raw["calibration"]),
 		circles=CircleDetectionConfig(**raw["hough_circles"]),
 		presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},
+		force_node=ForcePointConfig(**force_raw) # <-- Add this line
 	)
 
 
@@ -118,10 +126,11 @@ def save_config(cfg: AppConfig) -> None:
 			}
 			for name, preset in cfg.presets.items()
 		},
+		"force_node": asdict(cfg.force_node)  # <-- Added to seamlessly save the data
 	}
+	
 	with open(_config_path, "w") as f:
 		yaml.dump(data, f, default_flow_style=False)
-
 
 # ---------------------------------------------------------------------------
 # Module-level config instance (loaded once at import time)
@@ -750,3 +759,24 @@ def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
 
     # Convert to a standard NumPy array for downstream data applications
     return np.array(collected_points, dtype=np.int32), frame
+
+
+
+def create_node_trackbars(window_name="Force Node"):
+    """Create a separate window with trackbars for collecting force magnitude [N] and node number associociated with this data"""
+    cv2.namedWindow(window_name)
+    cv2.createTrackbar("Force Magnitude [N]", window_name, 0, 20, lambda v: None)
+    cv2.createTrackbar("Node Number", window_name, 1, 20, lambda v: None)
+
+def get_node_params_from_trackbars(window_name="Force Node Tuning"):
+	"""Read current trackbar values and return them as a dict.
+	Falls back to default values if the window does not exist yet."""
+	if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+		return {
+			"force_magnitude": 0,
+			"node_number": 1,
+		}
+	return {
+		"force_magnitude": cv2.getTrackbarPos("Force Magnitude [N]", window_name),
+		"node_number": cv2.getTrackbarPos("Node Number", window_name),
+	}
