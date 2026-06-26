@@ -23,6 +23,9 @@ calibration:
   - 143
   sat_margin: 60
   val_margin: 60
+force_node:
+  force_magnitude: 0.0
+  node_number: 1
 hough_circles:
   dp: 1
   max_radius: 20
@@ -48,6 +51,3 @@ presets:
     - 180
     - 255
     - 255
-force_node:
-  force_magnitude: 0
-  node_number: 1

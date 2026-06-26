@@ -6,27 +6,7 @@ import cv2
 import numpy as np
 
 from cameraV2 import create_pipeline, get_frame, stop_pipeline
-from processing import (
-	create_red_mask,
-	draw_blob_calibration_info,
-	draw_centers_with_positions,
- 	calibrate_from_blob,
-	apply_calibration_preset,
-	find_red_blob_data,
-	get_blob_at_point,
-	sample_hsv_at_point,
-	show_red_mask_only,
-	detect_circles,
-	draw_circles,
-	create_circle_trackbars,
-	get_circle_params_from_trackbars,
-    find_closest_blob_center,
-    update_and_draw_tracked_points,
-	compute_and_draw_artificial_point,
-	filter_and_collect_points,
-	create_node_trackbars,
-	get_node_params_from_trackbars
-)
+from processing import *
 from commands import execute_command
 
 # Default runtime switches
@@ -179,6 +159,9 @@ def main():
 				save_config(cfg)
 				print(f"Configuration and Force Node data saved successfully.")
 
+				unique_base = save_points_data(state, node_params)
+				save_frame_image(raw_frame, unique_base)
+
 	finally:
 		stop_pipeline(pipeline)
 		cv2.destroyAllWindows()
@@ -186,3 +169,6 @@ def main():
 
 if __name__ == "__main__":
 	main()
+
+
+

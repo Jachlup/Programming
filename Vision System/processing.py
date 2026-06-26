@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 import yaml
 from dataclasses import dataclass, field, asdict
+from datetime import datetime
 
 
 # ---------------------------------------------------------------------------
@@ -780,3 +781,85 @@ def get_node_params_from_trackbars(window_name="Force Node Tuning"):
 		"force_magnitude": cv2.getTrackbarPos("Force Magnitude [N]", window_name),
 		"node_number": cv2.getTrackbarPos("Node Number", window_name),
 	}
+
+def _generate_unique_base_name(node_number: int, force_magnitude: float) -> str:
+    """Generates a unique file base name containing node number, force, and timestamp."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Replace decimal dots with underscores to ensure clean, safe file names
+    force_str = str(force_magnitude).replace('.', '_')
+    return f"node_{node_number}_force_{force_str}N_{timestamp}"
+
+
+def save_points_data(state: dict, node_params: dict) -> str:
+    """
+    Saves detected points into two separate text files inside a 'node forces' subfolder.
+    Returns the unique base name string so the image saver can mirror it.
+    """
+    # Extract the metadata params
+    node_num = node_params.get("node_number", 1)
+    force_mag = node_params.get("force_magnitude", 0)
+    
+    # Generate the unified unique filename
+    base_name = _generate_unique_base_name(node_num, force_mag)
+    
+    # Determine and create the path for the 'node forces' folder
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    node_forces_dir = os.path.join(current_dir, "node forces")
+    os.makedirs(node_forces_dir, exist_ok=True)
+    
+    # Target file paths inside the 'node forces' folder
+    file_with_art_path = os.path.join(node_forces_dir, f"{base_name}_with_art.txt")
+    file_no_art_path = os.path.join(node_forces_dir, f"{base_name}_no_art.txt")
+    
+    # Extract point collections from the application state
+    all_points = state.get("final_points_array", np.array([]))
+    artificial_point = state.get("artificial_point", None)
+    
+    # Isolate points without the artificial addition
+    if artificial_point is not None and len(all_points) > 0:
+        points_no_art = all_points[:-1]
+    else:
+        points_no_art = all_points
+
+    # Standard header metadata format
+    header = f"Node Number: {node_num}\nForce Magnitude [N]: {force_mag}\n"
+
+    # File 1: Save ALL points (including artificial tracking target)
+    with open(file_with_art_path, "w") as f:
+        f.write(header)
+        f.write("--- Points (with Artificial Point) ---\n")
+        for pt in all_points:
+            f.write(f"{pt[0]},{pt[1]}\n")
+            
+    # File 2: Save ONLY natural points (excluding artificial tracking target)
+    with open(file_no_art_path, "w") as f:
+        f.write(header)
+        f.write("--- Points (without Artificial Point) ---\n")
+        for pt in points_no_art:
+            f.write(f"{pt[0]},{pt[1]}\n")
+            
+    print(f"Data saved successfully:\n  -> node forces/{os.path.basename(file_with_art_path)}\n  -> node forces/{os.path.basename(file_no_art_path)}")
+    return base_name
+
+
+def save_frame_image(frame: np.ndarray, base_name: str) -> None:
+    """
+    Saves the provided frame as a PNG in a 'Photos' subfolder,
+    matching the exact unique base name used by the companion text logs.
+    """
+    if frame is None:
+        print("Error: Image frame is empty. Cannot save.")
+        return
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    images_dir = os.path.join(current_dir, "Photos")
+    
+    # Automatically create the 'Photos' subdirectory if it doesn't exist
+    os.makedirs(images_dir, exist_ok=True)
+    
+    # Build complete destination image path
+    image_path = os.path.join(images_dir, f"{base_name}.png")
+    
+    # Commit frame to disk using OpenCV serialization
+    cv2.imwrite(image_path, frame)
+    print(f"Image saved successfully:\n  -> Photos/{os.path.basename(image_path)}")
