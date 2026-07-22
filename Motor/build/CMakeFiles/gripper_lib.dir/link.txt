@@ -1,0 +1,2 @@
+/usr/bin/ar qc libgripper_lib.a CMakeFiles/gripper_lib.dir/gripper.cpp.o
+/usr/bin/ranlib libgripper_lib.a

@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/gripper_control.dir/link.d CMakeFiles/gripper_control.dir/main.cpp.o -o gripper_control  -Wl,-rpath,/home/janek/Desktop/Programming/Programming/Motor/build/candlelib libgripper_lib.a candlelib/libcandle.so liblogger.a -lpthread /usr/lib/x86_64-linux-gnu/libusb-1.0.so

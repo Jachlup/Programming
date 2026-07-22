@@ -103,9 +103,9 @@ def wait_until_reached(md, target, tolerance=0.5, timeout_s=5.0,
 def open_gripper(md, position=2.0, velocity=20.0, accel=40.0,
                   feedback_cb=None, cancel_check=None):
     """Move the jaw to the open position using profiled position control, and block until it arrives."""
-    error = md.setMotionMode(pyCandle.MotionMode_t.POSITION_PID)
+    error = md.setMotionMode(pyCandle.MotionMode_t.PROFILE_POSITION)
     if error != pyCandle.MD_Error_t.OK:
-        raise RuntimeError(f"set POSITION_PID failed: {error}")
+        raise RuntimeError(f"set PROFILE_POSITION failed: {error}")
 
     error = md.setProfileVelocity(velocity)
     if error != pyCandle.MD_Error_t.OK:
@@ -122,14 +122,25 @@ def open_gripper(md, position=2.0, velocity=20.0, accel=40.0,
     wait_until_reached(md, position, feedback_cb=feedback_cb, cancel_check=cancel_check)
 
 def close(md, torque=-1.0):
-    """Apply impedance control to close the gripper."""
+    """Close with constant motor torque in Nm. The caller must later call stop()."""
     error = md.setMotionMode(pyCandle.MotionMode_t.RAW_TORQUE)
     if error != pyCandle.MD_Error_t.OK:
-        raise RuntimeError(f"set IMPEDANCE failed: {error}")
+        raise RuntimeError(f"set RAW_TORQUE failed: {error}")
 
     error = md.setTargetTorque(torque)
     if error != pyCandle.MD_Error_t.OK:
         raise RuntimeError(f"setTargetTorque failed: {error}")
+
+
+def stop(md):
+    """Release commanded torque and put the controller in idle mode."""
+    error = md.setTargetTorque(0.0)
+    if error != pyCandle.MD_Error_t.OK:
+        raise RuntimeError(f"setTargetTorque(0) failed: {error}")
+
+    error = md.setMotionMode(pyCandle.MotionMode_t.IDLE)
+    if error != pyCandle.MD_Error_t.OK:
+        raise RuntimeError(f"set IDLE failed: {error}")
 
 def close_debug(md, torque=1.0, epsilon=0.01, stall_time_s=0.1, timeout_s=5.0):
     import time

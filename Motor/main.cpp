@@ -1,51 +1,107 @@
 #include "gripper.h"
-#include <iostream>
-#include <thread>
+
+#include "MD.hpp"
+
 #include <chrono>
+#include <atomic>
+#include <csignal>
+#include <cstdlib>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <thread>
 
-// #include <candle/candle.h>
-// #include <candle/MD.h>
+namespace {
+std::atomic_bool keep_holding{true};
 
-int main() {
-    try {
-        // Initialize CANdle and MD
-        // CANdle candle;
-        // MD md;
-        // Gripper::connect(candle, md);
-        
-        // Home the gripper
-        // std::cout << "Homing gripper..." << std::endl;
-        // Gripper::home(md);
-        
-        // Wait for stabilization
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        
-        // Open the gripper
-        // std::cout << "Opening gripper..." << std::endl;
-        // Gripper::open_gripper(md);
-        
-        // Wait
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        
-        // Set max torque
-        // md.setMaxTorque(2.0);
-        
-        // Apply small torque
-        // md.setTargetTorque(0.2);
-        
-        // Wait
-        // std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        
-        // Release torque
-        // md.setTargetTorque(0.0);
-        
-        std::cout << "Gripper control example (stubs - integrate with CANdle SDK)" << std::endl;
-        std::cout << "Uncomment code and link CANdle SDK to compile." << std::endl;
-        
-        return 0;
+extern "C" void request_stop(int) {
+    keep_holding.store(false);
+}
+
+void usage(const char* program) {
+    std::cerr
+        << "Usage:\n"
+        << "  " << program << " home [torque_Nm]\n"
+        << "  " << program << " position <radians> [velocity_rad_s] [accel_rad_s2]\n"
+        << "  " << program << " close <torque_Nm>\n\n"
+        << "Examples:\n"
+        << "  " << program << " home -0.6\n"
+        << "  " << program << " position 2.0 20 40\n"
+        << "  " << program << " close -0.2\n";
+}
+
+double number(const char* text, const char* name) {
+    char* end = nullptr;
+    const double value = std::strtod(text, &end);
+    if (end == text || *end != '\0') {
+        throw std::invalid_argument(std::string("Invalid ") + name + ": " + text);
     }
-    catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+    return value;
+}
+} // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        usage(argv[0]);
+        return 2;
+    }
+
+    mab::Candle* candle = nullptr;
+    mab::MD* raw_md = nullptr;
+
+    try {
+        Gripper::connect(candle, raw_md);
+        mab::MD* md = raw_md;
+        const std::string command = argv[1];
+
+        if (command == "home") {
+            const double torque = argc >= 3 ? number(argv[2], "torque") : -0.6;
+            Gripper::home(md, torque);
+            std::cout << "Homing complete; position is zero.\n";
+        } else if (command == "position") {
+            if (argc < 3) {
+                usage(argv[0]);
+                return 2;
+            }
+            const double position = number(argv[2], "position");
+            const double velocity = argc >= 4 ? number(argv[3], "velocity") : 20.0;
+            const double accel = argc >= 5 ? number(argv[4], "acceleration") : 40.0;
+            Gripper::open_gripper(md, position, velocity, accel);
+            std::cout << "Position reached.\n";
+        } else if (command == "close") {
+            if (argc < 3) {
+                usage(argv[0]);
+                return 2;
+            }
+            const double torque = number(argv[2], "torque");
+
+            // Keep the process and drive enabled so the torque controller keeps holding.
+            // The signal handler only changes a flag; SDK calls remain in normal program flow.
+            keep_holding.store(true);
+            std::signal(SIGINT, request_stop);
+            std::signal(SIGTERM, request_stop);
+            Gripper::close(md, torque);
+            std::cout << "Holding with " << torque << " Nm. Press Ctrl+C to release.\n";
+            while (keep_holding.load()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            Gripper::stop(md);
+            std::cout << "\nClose torque released.\n";
+        } else {
+            usage(argv[0]);
+            return 2;
+        }
+
+        md->disable();
+        return 0;
+    } catch (const std::exception& error) {
+        // Best-effort safe shutdown; do not mask the original failure.
+        if (raw_md != nullptr) {
+            raw_md->setTargetTorque(0.0f);
+            raw_md->setMotionMode(mab::MdMode_E::IDLE);
+            raw_md->disable();
+        }
+        std::cerr << "Error: " << error.what() << '\n';
         return 1;
     }
 }

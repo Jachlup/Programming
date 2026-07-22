@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/janek/Desktop/Programming/Programming/Motor/build/cmake_install.cmake",
+		"/home/janek/Desktop/Programming/Programming/Motor/build/shared_data/cmake_install.cmake",
+		"/home/janek/Desktop/Programming/Programming/Motor/build/candlelib/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

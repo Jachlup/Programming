@@ -1,5 +1,4 @@
 import gripper
-import pyCandle as pc
 import time
 
 if __name__ == "__main__":
@@ -15,10 +14,14 @@ if __name__ == "__main__":
     )
     """
     time.sleep(1.0)
-    md.setTargetTorque(0.0) 
-    pc.MotionMode_t.RAW_TORQUE
-    md.setMaxTorque(2.0)
-    md.setTargetTorque(0.2)
-
-
-    time.sleep(1.0)
+    # setTargetTorque expects Nm, not amperes. close() also selects RAW_TORQUE.
+    gripper.close(md, torque=-0.2)
+    print("Holding with -0.2 Nm. Press Ctrl+C to release.")
+    try:
+        while True:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\nReleasing gripper.")
+    finally:
+        gripper.stop(md)
+        md.disable()

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(GripperControl CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -22,19 +22,29 @@ find_package(Candle QUIET PATHS "${CANDLE_SDK_PATH}/cmake")
 if(NOT Candle_FOUND)
     message(STATUS "CANdle package not found, building from source...")
     
-    # Add CANdle subdirectories
-    add_subdirectory("${CANDLE_SDK_PATH}/candlelib" candlelib EXCLUDE_FROM_ALL)
-    add_subdirectory("${CANDLE_SDK_PATH}/commons" commons EXCLUDE_FROM_ALL)
+    # Define the two commons targets needed by candlelib. We do this directly
+    # because the SDK's full commons project also requires optional git submodules.
+    add_subdirectory("${CANDLE_SDK_PATH}/commons/shared_data" shared_data EXCLUDE_FROM_ALL)
+    add_library(logger STATIC "${CANDLE_SDK_PATH}/commons/logger/logger.cpp")
+    target_include_directories(logger PUBLIC "${CANDLE_SDK_PATH}/commons/logger")
+    set_target_properties(logger PROPERTIES POSITION_INDEPENDENT_CODE ON)
     
-    # Set variables for later use
-    set(CANDLE_LIBRARIES candlelib)
+    # Now add candlelib
+    if(EXISTS "${CANDLE_SDK_PATH}/candlelib/CMakeLists.txt")
+        add_subdirectory("${CANDLE_SDK_PATH}/candlelib" candlelib EXCLUDE_FROM_ALL)
+        message(STATUS "Added candlelib subdirectory")
+    else()
+        message(FATAL_ERROR "candlelib/CMakeLists.txt not found")
+    endif()
+    
+    # Set variables for later use - link to 'candle' target, not 'candlelib'
+    set(CANDLE_TARGET candle)
     set(CANDLE_INCLUDE_DIRS 
         "${CANDLE_SDK_PATH}/candlelib/include"
-        "${CANDLE_SDK_PATH}/commons/logger"
-        "${CANDLE_SDK_PATH}/commons/shared_data"
     )
 else()
     message(STATUS "Found CANdle SDK")
+    set(CANDLE_TARGET candle)
 endif()
 
 # ============================================================================
@@ -51,7 +61,7 @@ target_include_directories(gripper_lib PUBLIC
 )
 
 target_link_libraries(gripper_lib PUBLIC
-    ${CANDLE_LIBRARIES}
+    ${CANDLE_TARGET}
 )
 
 # ============================================================================
@@ -64,7 +74,7 @@ add_executable(gripper_control
 
 target_link_libraries(gripper_control PRIVATE
     gripper_lib
-    ${CANDLE_LIBRARIES}
+    ${CANDLE_TARGET}
 )
 
 target_include_directories(gripper_control PRIVATE
@@ -101,6 +111,5 @@ message(STATUS "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
 message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
 message(STATUS "CANDLE_SDK_PATH: ${CANDLE_SDK_PATH}")
 message(STATUS "CANDLE_INCLUDE_DIRS: ${CANDLE_INCLUDE_DIRS}")
-message(STATUS "CANDLE_LIBRARIES: ${CANDLE_LIBRARIES}")
+message(STATUS "CANDLE_TARGET: ${CANDLE_TARGET}")
 message(STATUS "=================================================")
-

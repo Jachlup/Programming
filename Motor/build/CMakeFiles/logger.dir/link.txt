@@ -1,0 +1,2 @@
+/usr/bin/ar qc liblogger.a "CMakeFiles/logger.dir/home/janek/Desktop/Programming/Repos/CANdle-SDK/commons/logger/logger.cpp.o"
+/usr/bin/ranlib liblogger.a
