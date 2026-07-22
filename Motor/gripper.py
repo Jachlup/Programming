@@ -132,6 +132,13 @@ def close(md, torque=-1.0):
         raise RuntimeError(f"setTargetTorque failed: {error}")
 
 
+def maintain_close(md, torque):
+    """Refresh the fixed torque command; call periodically for watchdog-safe holding."""
+    error = md.setTargetTorque(torque)
+    if error != pyCandle.MD_Error_t.OK:
+        raise RuntimeError(f"refresh setTargetTorque failed: {error}")
+
+
 def stop(md):
     """Release commanded torque and put the controller in idle mode."""
     error = md.setTargetTorque(0.0)

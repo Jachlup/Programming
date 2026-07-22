@@ -194,8 +194,8 @@ CMakeFiles/gripper_lib.dir/clean:
 
 # All Build rule for target.
 CMakeFiles/gripper_control.dir/all: CMakeFiles/logger.dir/all
-CMakeFiles/gripper_control.dir/all: candlelib/CMakeFiles/candle.dir/all
 CMakeFiles/gripper_control.dir/all: CMakeFiles/gripper_lib.dir/all
+CMakeFiles/gripper_control.dir/all: candlelib/CMakeFiles/candle.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=19,20 "Built target gripper_control"

@@ -173,6 +173,12 @@ void Gripper::close(mab::MD* md, double torque) {
     }
 }
 
+void Gripper::maintain_close(mab::MD* md, double torque) {
+    // Some drive/firmware configurations use a command watchdog. Refreshing the
+    // fixed target also makes holding robust against a lost CAN frame.
+    require_ok(md->setTargetTorque(static_cast<float>(torque)), "refresh target torque");
+}
+
 void Gripper::stop(mab::MD* md) {
     require_ok(md->setTargetTorque(0.0f), "set zero torque");
     require_ok(md->setMotionMode(mab::MdMode_E::IDLE), "set IDLE");
@@ -198,7 +204,7 @@ void Gripper::close_debug(
         throw std::runtime_error("setTargetTorque failed");
     }
     
-    dauto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::high_resolution_clock::now();
     double last_position = read_position(md);
     
     while (true) {

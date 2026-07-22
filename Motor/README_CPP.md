@@ -44,6 +44,9 @@ The executable is `build/gripper_control`.
 ```
 
 `close` keeps the program running, the drive enabled, and `RAW_TORQUE` active.
+It refreshes the fixed torque target at 50 Hz and prints target torque, measured
+torque, and position twice per second. This supports drive configurations with a
+command watchdog and provides useful fault diagnostics.
 Pressing Ctrl+C calls `Gripper::stop()` and disables the drive. An application
 that embeds this library must likewise keep running and call `Gripper::stop()`
 on its shutdown or emergency-stop path.

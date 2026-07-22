@@ -59,6 +59,9 @@ public:
         double torque = -1.0
     );
 
+    /** Re-send the torque target. Call periodically while holding. */
+    static void maintain_close(mab::MD* md, double torque);
+
     /** Stop producing torque and put the controller in idle mode. */
     static void stop(mab::MD* md);
     

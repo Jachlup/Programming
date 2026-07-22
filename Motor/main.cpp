@@ -82,8 +82,24 @@ int main(int argc, char** argv) {
             std::signal(SIGTERM, request_stop);
             Gripper::close(md, torque);
             std::cout << "Holding with " << torque << " Nm. Press Ctrl+C to release.\n";
+            auto next_report = std::chrono::steady_clock::now();
             while (keep_holding.load()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                Gripper::maintain_close(md, torque);
+
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= next_report) {
+                    const auto [actual_torque, torque_error] = md->getTorque();
+                    const auto [position, position_error] = md->getPosition();
+                    if (torque_error != mab::MD::Error_t::OK ||
+                        position_error != mab::MD::Error_t::OK) {
+                        throw std::runtime_error("Holding feedback read failed");
+                    }
+                    std::cout << "target=" << torque << " Nm, actual=" << actual_torque
+                              << " Nm, position=" << position << " rad\n";
+                    next_report = now + std::chrono::milliseconds(500);
+                }
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }
             Gripper::stop(md);
             std::cout << "\nClose torque released.\n";
