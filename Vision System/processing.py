@@ -8,6 +8,7 @@ import numpy as np
 import yaml
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
+from typing import Optional
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +32,7 @@ class HsvPreset:
 @dataclass
 class CalibrationConfig:
 	min_area: int
-	max_area: int
+	max_area: Optional[int]
 	area_low_ratio: float
 	area_up_ratio: float
 	hue_margin: int
@@ -187,6 +188,34 @@ def sample_hsv_at_point(frame, point):
 	return tuple(int(value) for value in hsv_frame[y, x])
 
 
+def sample_blob_hsv_near_point(frame, blob, point):
+	"""Sample the nearest currently-red pixel inside a blob's outer contour.
+
+	This handles hollow markers: their centre is inside the outer contour but is
+	usually background, so sampling the clicked pixel itself gives a bad colour.
+	"""
+	if frame is None or blob is None:
+		return None
+
+	height, width = frame.shape[:2]
+	x, y = point
+	if x < 0 or y < 0 or x >= width or y >= height:
+		return None
+
+	red_mask = create_red_mask(frame)
+	contour_mask = np.zeros((height, width), dtype=np.uint8)
+	cv2.drawContours(contour_mask, [blob["contour"]], -1, 255, thickness=cv2.FILLED)
+	candidate_mask = cv2.bitwise_and(red_mask, contour_mask)
+	candidate_y, candidate_x = np.nonzero(candidate_mask)
+	if candidate_x.size == 0:
+		return None
+
+	distances = (candidate_x.astype(np.int64) - x) ** 2 + (candidate_y.astype(np.int64) - y) ** 2
+	nearest = int(np.argmin(distances))
+	hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+	return tuple(int(value) for value in hsv_frame[candidate_y[nearest], candidate_x[nearest]])
+
+
 def create_red_mask(
 	frame,
 	lower_red1=None,
@@ -219,11 +248,11 @@ def calibrate_from_blob(
 	val_margin=None,
 ):
 	"""Update the live calibration thresholds from a selected blob."""
-	area_low_ratio = area_low_ratio or cfg.calibration.area_low_ratio
-	area_up_ratio  = area_up_ratio  or cfg.calibration.area_up_ratio
-	hue_margin     = hue_margin     or cfg.calibration.hue_margin
-	sat_margin     = sat_margin     or cfg.calibration.sat_margin
-	val_margin     = val_margin     or cfg.calibration.val_margin
+	area_low_ratio = cfg.calibration.area_low_ratio if area_low_ratio is None else area_low_ratio
+	area_up_ratio  = cfg.calibration.area_up_ratio if area_up_ratio is None else area_up_ratio
+	hue_margin     = cfg.calibration.hue_margin if hue_margin is None else hue_margin
+	sat_margin     = cfg.calibration.sat_margin if sat_margin is None else sat_margin
+	val_margin     = cfg.calibration.val_margin if val_margin is None else val_margin
 
 	area = float(blob["area"])
 	cfg.calibration.min_area = max(1, int(area * (1.0 - area_low_ratio)))
@@ -380,7 +409,7 @@ def draw_blob_calibration_info(frame, blob):
 	cv2.putText(frame, f"Area: {area:.1f} px^2", (box_x1 + 10, box_y1 + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 	cv2.putText(frame, f"Area range: {cfg.calibration.min_area} .. {cfg.calibration.max_area}", (box_x1 + 10, box_y1 + 46), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 	if sample_hsv is not None:
-		cv2.putText(frame, f"Clicked HSV: {tuple(int(value) for value in sample_hsv)}", (box_x1 + 10, box_y1 + 68), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+		cv2.putText(frame, f"Sampled HSV: {tuple(int(value) for value in sample_hsv)}", (box_x1 + 10, box_y1 + 68), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 	cv2.putText(frame, f"Lower red 1: {_format_hsv_range(cfg.calibration.red_lower_1, cfg.calibration.red_upper_1)}", (box_x1 + 10, box_y1 + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 	cv2.putText(frame, f"Lower red 2: {_format_hsv_range(cfg.calibration.red_lower_2, cfg.calibration.red_upper_2)}", (box_x1 + 10, box_y1 + 112), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 	cv2.putText(frame, f"Press x to clear selection", (box_x1 + 10, box_y1 + 134), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
@@ -580,6 +609,81 @@ def create_circle_trackbars(window_name="Circle Tuning"):
     cv2.createTrackbar("max_radius", window_name, cfg.circles.max_radius, 500, lambda v: None)
 
 
+# Area ratios are displayed as whole percentages: 45 on a trackbar means 0.45.
+AREA_RATIO_SCALE = 100
+AREA_RATIO_TRACKBAR_MAX = 100  # Ratios are constrained to the sensible range 0.00 .. 1.00.
+AREA_VALUE_TRACKBAR_MAX = 100_000
+AREA_TUNING_WINDOW = "Area Tuning"
+
+
+def is_area_tuning_window_open(window_name=AREA_TUNING_WINDOW):
+    """Return whether the optional area tuning window currently exists."""
+    try:
+        return cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) >= 1
+    except cv2.error:
+        return False
+
+
+def create_area_tuning_window(window_name=AREA_TUNING_WINDOW):
+    """Open trackbars initialized from the shared live calibration config."""
+    if is_area_tuning_window_open(window_name):
+        return
+
+    calibration = cfg.calibration
+    min_area = max(0, min(int(calibration.min_area), AREA_VALUE_TRACKBAR_MAX))
+    max_area = 0 if calibration.max_area is None else max(1, min(int(calibration.max_area), AREA_VALUE_TRACKBAR_MAX))
+    low_ratio = max(0, min(round(calibration.area_low_ratio * AREA_RATIO_SCALE), AREA_RATIO_TRACKBAR_MAX))
+    up_ratio = max(0, min(round(calibration.area_up_ratio * AREA_RATIO_SCALE), AREA_RATIO_TRACKBAR_MAX))
+
+    cv2.namedWindow(window_name)
+    cv2.createTrackbar("area_low_ratio x100", window_name, low_ratio, AREA_RATIO_TRACKBAR_MAX, lambda value: None)
+    cv2.createTrackbar("area_up_ratio x100", window_name, up_ratio, AREA_RATIO_TRACKBAR_MAX, lambda value: None)
+    cv2.createTrackbar("min_area", window_name, min_area, AREA_VALUE_TRACKBAR_MAX, lambda value: None)
+    cv2.createTrackbar("max_area (0=None)", window_name, max_area, AREA_VALUE_TRACKBAR_MAX, lambda value: None)
+
+
+def update_area_tuning_from_trackbars(window_name=AREA_TUNING_WINDOW):
+    """Validate the sliders and copy their values into cfg.calibration immediately."""
+    if not is_area_tuning_window_open(window_name):
+        return None
+
+    low_ratio_value = cv2.getTrackbarPos("area_low_ratio x100", window_name)
+    up_ratio_value = cv2.getTrackbarPos("area_up_ratio x100", window_name)
+    min_area = max(0, cv2.getTrackbarPos("min_area", window_name))
+    max_area_value = cv2.getTrackbarPos("max_area (0=None)", window_name)
+
+    # Zero disables the maximum. Any enabled maximum is clamped to min_area.
+    max_area = None if max_area_value == 0 else max(min_area, max_area_value)
+    if max_area is not None and max_area != max_area_value:
+        cv2.setTrackbarPos("max_area (0=None)", window_name, max_area)
+
+    calibration = cfg.calibration
+    calibration.area_low_ratio = low_ratio_value / AREA_RATIO_SCALE
+    calibration.area_up_ratio = up_ratio_value / AREA_RATIO_SCALE
+    calibration.min_area = min_area
+    calibration.max_area = max_area
+
+    return {
+        "area_low_ratio": calibration.area_low_ratio,
+        "area_up_ratio": calibration.area_up_ratio,
+        "min_area": calibration.min_area,
+        "max_area": calibration.max_area,
+    }
+
+
+def sync_area_tuning_window_from_config(window_name=AREA_TUNING_WINDOW):
+    """Refresh open area sliders after another feature, such as calibration, changes cfg."""
+    if not is_area_tuning_window_open(window_name):
+        return
+
+    calibration = cfg.calibration
+    cv2.setTrackbarPos("area_low_ratio x100", window_name, round(calibration.area_low_ratio * AREA_RATIO_SCALE))
+    cv2.setTrackbarPos("area_up_ratio x100", window_name, round(calibration.area_up_ratio * AREA_RATIO_SCALE))
+    cv2.setTrackbarPos("min_area", window_name, min(calibration.min_area, AREA_VALUE_TRACKBAR_MAX))
+    max_area = 0 if calibration.max_area is None else min(calibration.max_area, AREA_VALUE_TRACKBAR_MAX)
+    cv2.setTrackbarPos("max_area (0=None)", window_name, max_area)
+
+
 def get_circle_params_from_trackbars(window_name="Circle Tuning"):
     """Read current trackbar values and return them as a dict.
     Falls back to cfg values if the window does not exist yet."""
@@ -735,9 +839,12 @@ def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
         is_inside = False
         
         for circle in valid_circles:
-            cx, cy, r = circle
+            # HoughCircles commonly returns uint16 values. Convert before
+            # subtraction so negative deltas do not wrap around and overflow.
+            cx, cy, r = (float(value) for value in circle)
+            px_float, py_float = float(px), float(py)
             # Compare squared distance to avoid computationally expensive square roots
-            squared_dist = (px - cx) ** 2 + (py - cy) ** 2
+            squared_dist = (px_float - cx) ** 2 + (py_float - cy) ** 2
             if squared_dist <= r ** 2:
                 is_inside = True
                 break  # Point is verified inside at least one circle; stop checking others

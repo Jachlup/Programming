@@ -2,8 +2,8 @@ calibration:
   area_low_ratio: 0.45
   area_up_ratio: 0.45
   hue_margin: 10
-  max_area: 393
-  min_area: 149
+  max_area: 800 #393
+  min_area: 149 #149
   preset: wide
   red_lower_1:
   - 0
