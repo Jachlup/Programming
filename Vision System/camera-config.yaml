@@ -33,18 +33,26 @@ camera:
 dataset:
   directory: datasets
   frames_per_sample: 1
+  maximum_invalid_frame_retries: 120
+  retry_invalid_frames: true
   save_compensated_coordinates: true
   save_feature_names: true
   save_images: true
+  save_origin_relative_coordinates: true
   save_raw_coordinates: true
 display:
+  show_circles: true
   show_features: false
   show_geometry: false
   show_lines: true
+  show_mask_only: false
   show_outliers: true
   show_points: true
+  show_status: true
+  show_warnings: true
 force_model:
   maximum_calibrated_force_N: 40.0
+  metadata_path: null
   minimum_calibrated_force_N: 5.0
   model_path: null
   model_type: null
@@ -53,12 +61,18 @@ force_node:
   node_number: 1
 geometry:
   allow_scale_compensation: false
+  allow_tracked_only_deforming: true
+  allow_tracked_only_rigid_reference: true
   enabled_feature_groups:
   - point_displacements
   - length_changes
   - relative_length_changes
   - angle_changes
-  geometry_configuration_version: '1'
+  feature_schema_version: '2'
+  geometry_configuration_version: '2'
+  geometry_reference_mode: translation_only
+  minimum_deforming_tracking_quality: 0.25
+  minimum_rigid_reference_tracking_quality: 0.35
   structural_connection_version: '1'
   structural_connections:
   - - LINE_A_00
@@ -77,6 +91,8 @@ hough_circles:
   min_radius: 7
   param1: 20
   param2: 9
+  require_validation_for_reference: false
+  require_validation_for_tracking: false
 presets:
   wide:
     red_lower_1:
@@ -96,7 +112,19 @@ presets:
     - 255
     - 255
 reference:
+  allow_tracked_only_origin: true
+  minimum_origin_tracking_quality: 0.35
   minimum_valid_rigid_reference_points: 2
+  origin_identity_lock_distance_px: 2.0
+  origin_initialization_max_distance_px: 2.0
+  origin_maximum_missing_frames: 5
+  origin_no_flow_max_distance_px: 0.25
+  origin_maximum_assignment_distance: 20.0
+  origin_reacquisition_max_distance_px: 20.0
+  origin_reacquisition_policy: manual_confirmation
+  origin_selection_max_distance_px: 25.0
+  origin_setup_ambiguity_margin_px: 1.0
+  origin_setup_identity_lock_distance_px: 2.0
   profile_path: reference-profile.json
   rigid_reference_point_ids: []
 reference_ransac:
@@ -105,10 +133,10 @@ reference_ransac:
   distance_threshold_px: 10.0
   enabled: true
   expected_line_count: 2
-  expected_points_line_a: 9
-  expected_points_line_b: 11
+  expected_points_line_a: 8
+  expected_points_line_b: 8
   iterations: 300
-  maximum_angle_difference_deg: 15.0
+  maximum_angle_difference_deg: 30.0
   maximum_line_separation_px: null
   maximum_mean_residual_px: 5.0
   maximum_outlier_count: 3
@@ -116,18 +144,28 @@ reference_ransac:
   minimum_line_separation_px: 20.0
   minimum_order_spacing_px: 2.0
 tracking:
+  allow_tracked_only_points: true
   assignment_method: hungarian
-  expected_deforming_point_count: 20
-  expected_reference_point_count: 2
+  expected_deforming_point_count: 16
+  expected_reference_origin_point_count: 1
+  expected_rigid_reference_point_count: 0
   maximum_adjacent_distance_ratio: 3.0
   maximum_assignment_distance: 35.0
   maximum_missing_frames: 5
   maximum_optical_flow_error: 25.0
   maximum_pyramid_level: 3
   minimum_valid_points: 20
+  minimum_tracked_only_quality: 0.25
   redetection_interval: 1
   termination_count: 20
   termination_epsilon: 0.03
   window_size:
   - 21
   - 21
+training:
+  baseline_model: ridge
+  model_name: force-ridge
+  model_version: '1'
+  ridge_alpha: 1.0e-06
+  random_seed: 42
+  validation_fraction: 0.2

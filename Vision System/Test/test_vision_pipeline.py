@@ -27,6 +27,7 @@ def _detections():
 		for x in np.linspace(50, 450, 11)
 	)
 	result.extend([
+		{"center": (500.0, 300.0), "detection_quality": 1.0},
 		{"center": (20.0, 20.0), "detection_quality": 1.0},
 		{"center": (20.0, 400.0), "detection_quality": 1.0},
 	])
@@ -37,9 +38,10 @@ def test_unequal_line_counts_and_permanent_ids():
 	config = _configuration()
 	result = initialise_reference(
 		_detections(), {**config["reference_ransac"], **config["reference"]},
-		(640, 480), [20, 21],
+		(640, 480), [21, 22], reference_origin_detection_index=20,
 	)
 	assert result.valid
+	assert result.reference_origin_point.id == "REFERENCE_ORIGIN"
 	assert [len(line.point_ids) for line in result.lines] == [9, 11]
 	assert result.lines[0].point_ids == [f"LINE_A_{i:02d}" for i in range(9)]
 	assert result.lines[1].point_ids == [f"LINE_B_{i:02d}" for i in range(11)]
@@ -49,14 +51,16 @@ def test_tracking_and_feature_order_are_valid():
 	config = _configuration()
 	result = initialise_reference(
 		_detections(), {**config["reference_ransac"], **config["reference"]},
-		(640, 480), [20, 21],
+		(640, 480), [21, 22], reference_origin_detection_index=20,
 	)
 	profile = make_reference_profile(
 		result, (640, 480), config["reference_ransac"], config["geometry"]
 	)
-	tracker = PointTracker(profile, config["tracking"])
+	tracker = PointTracker(profile, {**config["tracking"], **config["reference"]})
 	points = tracker.update(np.zeros((480, 640), np.uint8), _detections())
-	geometry = extract_geometry(profile, points, config["geometry"])
+	geometry = extract_geometry(
+		profile, points, {**config["geometry"], **config["reference"]}
+	)
 	assert tracker.valid
 	assert geometry.valid
 	assert geometry.feature_names[:4] == [

@@ -1,0 +1,618 @@
+{
+  "profile_id": "finray-20260729T180322Z",
+  "created_at": "2026-07-29T18:03:22.477211+00:00",
+  "image_resolution": [
+    640,
+    480
+  ],
+  "expected_points": {
+    "LINE_A": 8,
+    "LINE_B": 8
+  },
+  "points": [
+    {
+      "id": "REFERENCE_ORIGIN",
+      "name": "REFERENCE_ORIGIN",
+      "point_group": "REFERENCE_ORIGIN",
+      "line_id": null,
+      "line_order": null,
+      "reference_position": [
+        306.5593784683685,
+        465.1276359600444
+      ],
+      "previous_position": [
+        306.5593784683685,
+        465.1276359600444
+      ],
+      "current_position": [
+        306.5593784683685,
+        465.1276359600444
+      ],
+      "predicted_position": [
+        306.5593784683685,
+        465.1276359600444
+      ],
+      "detected_position": [
+        306.5593784683685,
+        465.1276359600444
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7708295919955911,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.0
+    },
+    {
+      "id": "LINE_A_00",
+      "name": "LINE_A_00",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 0,
+      "reference_position": [
+        152.14321295143213,
+        393.7297633872976
+      ],
+      "previous_position": [
+        152.14321295143213,
+        393.7297633872976
+      ],
+      "current_position": [
+        152.14321295143213,
+        393.7297633872976
+      ],
+      "predicted_position": [
+        152.14321295143213,
+        393.7297633872976
+      ],
+      "detected_position": [
+        152.14321295143213,
+        393.7297633872976
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7261537343887728,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.45213683103312974
+    },
+    {
+      "id": "LINE_A_01",
+      "name": "LINE_A_01",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 1,
+      "reference_position": [
+        166.7971758664955,
+        352.9640564826701
+      ],
+      "previous_position": [
+        166.7971758664955,
+        352.9640564826701
+      ],
+      "current_position": [
+        166.7971758664955,
+        352.9640564826701
+      ],
+      "predicted_position": [
+        166.7971758664955,
+        352.9640564826701
+      ],
+      "detected_position": [
+        166.7971758664955,
+        352.9640564826701
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7772576911504434,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.37894934748344866
+    },
+    {
+      "id": "LINE_A_02",
+      "name": "LINE_A_02",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 2,
+      "reference_position": [
+        181.295,
+        311.6020833333333
+      ],
+      "previous_position": [
+        181.295,
+        311.6020833333333
+      ],
+      "current_position": [
+        181.295,
+        311.6020833333333
+      ],
+      "predicted_position": [
+        181.295,
+        311.6020833333333
+      ],
+      "detected_position": [
+        181.295,
+        311.6020833333333
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.8347742352623284,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.043732957412853324
+    },
+    {
+      "id": "LINE_A_03",
+      "name": "LINE_A_03",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 3,
+      "reference_position": [
+        195.71362683438153,
+        269.537106918239
+      ],
+      "previous_position": [
+        195.71362683438153,
+        269.537106918239
+      ],
+      "current_position": [
+        195.71362683438153,
+        269.537106918239
+      ],
+      "predicted_position": [
+        195.71362683438153,
+        269.537106918239
+      ],
+      "detected_position": [
+        195.71362683438153,
+        269.537106918239
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7189193260760577,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.7798248527938352
+    },
+    {
+      "id": "LINE_A_04",
+      "name": "LINE_A_04",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 4,
+      "reference_position": [
+        210.98519407763104,
+        227.5658263305322
+      ],
+      "previous_position": [
+        210.98519407763104,
+        227.5658263305322
+      ],
+      "current_position": [
+        210.98519407763104,
+        227.5658263305322
+      ],
+      "predicted_position": [
+        210.98519407763104,
+        227.5658263305322
+      ],
+      "detected_position": [
+        210.98519407763104,
+        227.5658263305322
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.8239953234030123,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.6819044560839176
+    },
+    {
+      "id": "LINE_A_05",
+      "name": "LINE_A_05",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 5,
+      "reference_position": [
+        226.24947851481016,
+        186.3566958698373
+      ],
+      "previous_position": [
+        226.24947851481016,
+        186.3566958698373
+      ],
+      "current_position": [
+        226.24947851481016,
+        186.3566958698373
+      ],
+      "predicted_position": [
+        226.24947851481016,
+        186.3566958698373
+      ],
+      "detected_position": [
+        226.24947851481016,
+        186.3566958698373
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7903628564945452,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.33180478231329147
+    },
+    {
+      "id": "LINE_A_06",
+      "name": "LINE_A_06",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 6,
+      "reference_position": [
+        242.72568578553617,
+        143.67830423940148
+      ],
+      "previous_position": [
+        242.72568578553617,
+        143.67830423940148
+      ],
+      "current_position": [
+        242.72568578553617,
+        143.67830423940148
+      ],
+      "predicted_position": [
+        242.72568578553617,
+        143.67830423940148
+      ],
+      "detected_position": [
+        242.72568578553617,
+        143.67830423940148
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.8399353486993958,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.6587256041808942
+    },
+    {
+      "id": "LINE_A_07",
+      "name": "LINE_A_07",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_A",
+      "line_order": 7,
+      "reference_position": [
+        257.7885480572597,
+        101.080572597137
+      ],
+      "previous_position": [
+        257.7885480572597,
+        101.080572597137
+      ],
+      "current_position": [
+        257.7885480572597,
+        101.080572597137
+      ],
+      "predicted_position": [
+        257.7885480572597,
+        101.080572597137
+      ],
+      "detected_position": [
+        257.7885480572597,
+        101.080572597137
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7581679210037909,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.34745526590644715
+    },
+    {
+      "id": "LINE_B_00",
+      "name": "LINE_B_00",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 0,
+      "reference_position": [
+        288.3366927958193,
+        105.9552071668533
+      ],
+      "previous_position": [
+        288.3366927958193,
+        105.9552071668533
+      ],
+      "current_position": [
+        288.3366927958193,
+        105.9552071668533
+      ],
+      "predicted_position": [
+        288.3366927958193,
+        105.9552071668533
+      ],
+      "detected_position": [
+        288.3366927958193,
+        105.9552071668533
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.8170263270067477,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.40575047825493105
+    },
+    {
+      "id": "LINE_B_01",
+      "name": "LINE_B_01",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 1,
+      "reference_position": [
+        290.7657004830918,
+        151.61191626409015
+      ],
+      "previous_position": [
+        290.7657004830918,
+        151.61191626409015
+      ],
+      "current_position": [
+        290.7657004830918,
+        151.61191626409015
+      ],
+      "predicted_position": [
+        290.7657004830918,
+        151.61191626409015
+      ],
+      "detected_position": [
+        290.7657004830918,
+        151.61191626409015
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.807140744827553,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.5214284089482382
+    },
+    {
+      "id": "LINE_B_02",
+      "name": "LINE_B_02",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 2,
+      "reference_position": [
+        292.21390937829295,
+        197.7147874956094
+      ],
+      "previous_position": [
+        292.21390937829295,
+        197.7147874956094
+      ],
+      "current_position": [
+        292.21390937829295,
+        197.7147874956094
+      ],
+      "predicted_position": [
+        292.21390937829295,
+        197.7147874956094
+      ],
+      "detected_position": [
+        292.21390937829295,
+        197.7147874956094
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.5357497312007375,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.3650117549783243
+    },
+    {
+      "id": "LINE_B_03",
+      "name": "LINE_B_03",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 3,
+      "reference_position": [
+        294.34640522875816,
+        243.40232389251995
+      ],
+      "previous_position": [
+        294.34640522875816,
+        243.40232389251995
+      ],
+      "current_position": [
+        294.34640522875816,
+        243.40232389251995
+      ],
+      "predicted_position": [
+        294.34640522875816,
+        243.40232389251995
+      ],
+      "detected_position": [
+        294.34640522875816,
+        243.40232389251995
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7000711258432626,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.5470256867546679
+    },
+    {
+      "id": "LINE_B_04",
+      "name": "LINE_B_04",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 4,
+      "reference_position": [
+        296.91103728313027,
+        289.69767441860466
+      ],
+      "previous_position": [
+        296.91103728313027,
+        289.69767441860466
+      ],
+      "current_position": [
+        296.91103728313027,
+        289.69767441860466
+      ],
+      "predicted_position": [
+        296.91103728313027,
+        289.69767441860466
+      ],
+      "detected_position": [
+        296.91103728313027,
+        289.69767441860466
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.5787490106890676,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.32821222103552217
+    },
+    {
+      "id": "LINE_B_05",
+      "name": "LINE_B_05",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 5,
+      "reference_position": [
+        298.77689694224233,
+        334.2121555303888
+      ],
+      "previous_position": [
+        298.77689694224233,
+        334.2121555303888
+      ],
+      "current_position": [
+        298.77689694224233,
+        334.2121555303888
+      ],
+      "predicted_position": [
+        298.77689694224233,
+        334.2121555303888
+      ],
+      "detected_position": [
+        298.77689694224233,
+        334.2121555303888
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7213672092176223,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.7171644781115063
+    },
+    {
+      "id": "LINE_B_06",
+      "name": "LINE_B_06",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 6,
+      "reference_position": [
+        302.1733029958286,
+        378.89609404626464
+      ],
+      "previous_position": [
+        302.1733029958286,
+        378.89609404626464
+      ],
+      "current_position": [
+        302.1733029958286,
+        378.89609404626464
+      ],
+      "predicted_position": [
+        302.1733029958286,
+        378.89609404626464
+      ],
+      "detected_position": [
+        302.1733029958286,
+        378.89609404626464
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.649919929974293,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.41389454485284194
+    },
+    {
+      "id": "LINE_B_07",
+      "name": "LINE_B_07",
+      "point_group": "DEFORMING",
+      "line_id": "LINE_B",
+      "line_order": 7,
+      "reference_position": [
+        304.64326160815403,
+        423.64628161570397
+      ],
+      "previous_position": [
+        304.64326160815403,
+        423.64628161570397
+      ],
+      "current_position": [
+        304.64326160815403,
+        423.64628161570397
+      ],
+      "predicted_position": [
+        304.64326160815403,
+        423.64628161570397
+      ],
+      "detected_position": [
+        304.64326160815403,
+        423.64628161570397
+      ],
+      "status": "DETECTED",
+      "tracking_quality": 0.7024730255336431,
+      "missing_frame_count": 0,
+      "reference_line_residual": 0.6163407088237767
+    }
+  ],
+  "lines": [
+    {
+      "line_id": "LINE_A",
+      "anchor": [
+        204.21224026094328,
+        248.314301144806
+      ],
+      "direction": [
+        0.33986554341297426,
+        -0.9404740360055688
+      ],
+      "point_ids": [
+        "LINE_A_00",
+        "LINE_A_01",
+        "LINE_A_02",
+        "LINE_A_03",
+        "LINE_A_04",
+        "LINE_A_05",
+        "LINE_A_06",
+        "LINE_A_07"
+      ],
+      "residuals": [
+        0.45213683103312974,
+        0.37894934748344866,
+        0.043732957412853324,
+        0.7798248527938352,
+        0.6819044560839176,
+        0.33180478231329147,
+        0.6587256041808942,
+        0.34745526590644715
+      ],
+      "mean_residual": 0.45931676215097716,
+      "length": 311.13417482097395
+    },
+    {
+      "line_id": "LINE_B",
+      "anchor": [
+        296.0209008394147,
+        265.64205505375435
+      ],
+      "direction": [
+        0.05059975352091097,
+        0.9987190120066921
+      ],
+      "point_ids": [
+        "LINE_B_00",
+        "LINE_B_01",
+        "LINE_B_02",
+        "LINE_B_03",
+        "LINE_B_04",
+        "LINE_B_05",
+        "LINE_B_06",
+        "LINE_B_07"
+      ],
+      "residuals": [
+        0.40575047825493105,
+        0.5214284089482382,
+        0.3650117549783243,
+        0.5470256867546679,
+        0.32821222103552217,
+        0.7171644781115063,
+        0.41389454485284194,
+        0.6163407088237767
+      ],
+      "mean_residual": 0.48935353521997604,
+      "length": 318.1092243595765
+    }
+  ],
+  "reference_origin_point_id": "REFERENCE_ORIGIN",
+  "reference_origin_position": [
+    306.5593784683685,
+    465.1276359600444
+  ],
+  "rigid_reference_point_ids": [],
+  "structural_connection_version": "1",
+  "configuration_version": "1",
+  "quality": 0.9525664851314524
+}

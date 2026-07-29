@@ -8,7 +8,7 @@ import numpy as np
 import yaml
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,8 @@ class CircleDetectionConfig:
 	param2: int
 	min_radius: int
 	max_radius: int
+	require_validation_for_reference: bool = False
+	require_validation_for_tracking: bool = False
 
 @dataclass
 class ForcePointConfig:
@@ -79,6 +81,7 @@ class AppConfig:
 	dataset: dict = field(default_factory=dict)
 	force_model: dict = field(default_factory=dict)
 	display: dict = field(default_factory=dict)
+	training: dict = field(default_factory=dict)
 	def active_preset(self) -> HsvPreset:
 		"""Return the currently selected HsvPreset."""
 		return self.presets[self.calibration.preset]
@@ -113,6 +116,7 @@ def load_config() -> AppConfig:
 		dataset=raw.get("dataset", {}),
 		force_model=raw.get("force_model", {}),
 		display=raw.get("display", {}),
+		training=raw.get("training", {}),
 	)
 
 
@@ -147,7 +151,7 @@ def save_config(cfg: AppConfig) -> None:
 		"force_node": asdict(cfg.force_node)  # <-- Added to seamlessly save the data
 	}
 	for section in ("camera", "reference_ransac", "tracking", "reference",
-					"geometry", "dataset", "force_model", "display"):
+					"geometry", "dataset", "force_model", "display", "training"):
 		data[section] = getattr(cfg, section)
 	
 	with open(_config_path, "w") as f:
@@ -394,6 +398,29 @@ def get_blob_at_point(blobs, point):
 		if cv2.pointPolygonTest(contour, (float(x), float(y)), False) >= 0:
 			return blob
 	return None
+
+
+def find_blob_index_for_click(
+	blobs: list[dict[str, Any]],
+	point: tuple[int, int],
+	maximum_distance_px: float,
+) -> int | None:
+	"""Resolve a click contour-first, then by a tightly bounded centre distance."""
+	x, y = point
+	for index, blob in enumerate(blobs):
+		contour = blob.get("contour")
+		if contour is not None and cv2.pointPolygonTest(
+			contour, (float(x), float(y)), False
+		) >= 0:
+			return index
+	if not blobs:
+		return None
+	distances = [
+		float(np.linalg.norm(np.subtract(blob["center"], (float(x), float(y)))))
+		for blob in blobs
+	]
+	nearest = int(np.argmin(distances))
+	return nearest if distances[nearest] <= float(maximum_distance_px) else None
 
 
 def overlay_red_mask_on_frame(frame, alpha: float = 0.5):
@@ -733,7 +760,7 @@ def get_circle_params_from_trackbars(window_name="Circle Tuning"):
     }
 
 def find_closest_blob_center(click_point, blobs):
-    """Find and return the closest red blob center to the clicked coordinate."""
+    """Deprecated diagnostic helper; permanent tracking uses detection assignment."""
     if not blobs:
         return None
     
@@ -749,6 +776,8 @@ def find_closest_blob_center(click_point, blobs):
 
 def update_and_draw_tracked_points(frame, blobs, tracked_points, max_distance=50):
     """
+    Deprecated diagnostic helper. The force-sensing runtime uses PointTracker.
+
     Tracks selected points frame-by-frame by linking them to the closest current 
     red blob center. Updates tracked_points in-place and draws tracking overlays.
     """
@@ -798,6 +827,8 @@ def update_and_draw_tracked_points(frame, blobs, tracked_points, max_distance=50
 
 def compute_and_draw_artificial_point(frame, tracked_points, angle_deg=25):
     """
+    Deprecated diagnostic helper. Artificial points are never force-sensing inputs.
+
     Calculates an artificial point by pivoting the vector from tracked_points[0] 
     to tracked_points[1] by `angle_deg` clockwise around tracked_points[0].
     
@@ -849,8 +880,10 @@ def compute_and_draw_artificial_point(frame, tracked_points, angle_deg=25):
 
 def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
     """
+    Deprecated Hough diagnostic helper. It never adds an artificial coordinate.
+
     Checks which regular blob centers are inside any detected circles.
-    Collects matching points and appends the artificial point to a single array.
+    Collects matching real detected points into a single array.
     
     Optionally draws a distinct visual ring around validated points if a frame is provided.
     """
@@ -892,18 +925,6 @@ def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
             if frame is not None:
                 cv2.circle(frame, point_tuple, 14, (255, 0, 0), 1, cv2.LINE_AA)
 
-    # 4. Always append the artificial point if it has been calculated
-    if artificial_point is not None:
-        collected_points.append(artificial_point)
-        
-        # Optional: Visual confirmation overlay for the artificial point
-        if frame is not None:
-            draw_artificial = (
-                int(round(artificial_point[0])),
-                int(round(artificial_point[1])),
-            )
-            cv2.circle(frame, draw_artificial, 14, (255, 255, 0), 1, cv2.LINE_AA)
-
     # Convert to a standard NumPy array for downstream data applications
     return np.array(collected_points, dtype=np.int32), frame
 
@@ -938,6 +959,8 @@ def _generate_unique_base_name(node_number: int, force_magnitude: float) -> str:
 
 def save_points_data(state: dict, node_params: dict) -> Optional[str]:
     """
+    Deprecated legacy TXT diagnostic; it is never used as model-training data.
+
     Save the displayed final points, including the artificial point, to one file.
 
     The node number comes from the Force Node window. The saved point count and

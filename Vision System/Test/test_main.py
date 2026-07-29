@@ -1,17 +1,20 @@
-import yaml
+"""Portable configuration smoke tests (no camera hardware required)."""
 
-def load_yaml():
-    with open('C:\\ESA Spaceship Poland\\Programming\\Vision System\\Test\\data.yaml', 'r') as file:
-        return yaml.safe_load(file)
-    
-def save_yaml(data):
-    with open('C:\\ESA Spaceship Poland\\Programming\\Vision System\\Test\\data.yaml', 'w') as file:
-        yaml.dump(data, file)
+from pathlib import Path
+import sys
 
-print(f"{load_yaml()}")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-data = {'hej':'działczy'}
+from processing import load_config
 
-save_yaml(data)
 
-print(f"{load_yaml()}")
+def test_camera_configuration_loads() -> None:
+	config = load_config()
+	assert config.camera["width"] > 0
+	assert config.camera["height"] > 0
+	assert config.reference_ransac["expected_points_line_a"] > 0
+	assert config.reference_ransac["expected_points_line_b"] > 0
+	assert config.geometry["geometry_reference_mode"] in {
+		"translation_only",
+		"translation_and_rotation",
+	}
