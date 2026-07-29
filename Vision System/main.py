@@ -1,13 +1,12 @@
 """Main application loop for RealSense capture and red-blob line detection."""
 
-from __future__ import annotations
 
 import os
 
 import cv2
 import numpy as np
 
-from cameraV2 import create_pipeline, get_frame, stop_pipeline
+from camera import create_pipeline, get_frame, stop_pipeline
 from processing import *
 from commands import execute_command
 
@@ -89,6 +88,9 @@ def on_mouse_click(event, x, y, flags, state):
     closest_center = find_closest_blob_center((x, y), state["blobs"])
     if closest_center is not None:
         if closest_center not in state["tracked_points"]:
+            if len(state["tracked_points"]) >= 2:
+                print("Two tracking targets are already selected. Remove one before adding another.")
+                return
             state["tracked_points"].append(closest_center)
             print(f"Added tracking target at: {closest_center}")
         else:
@@ -113,7 +115,7 @@ def main():
 			
 	cv2.namedWindow("Red Blob Detector")
 	cv2.setMouseCallback("Red Blob Detector", on_mouse_click, state)
-	create_circle_trackbars()
+	# create_circle_trackbars()
 	create_node_trackbars()
 	try:
 		while True:
@@ -208,7 +210,8 @@ def main():
 				print(f"Configuration and Force Node data saved successfully.")
 
 				unique_base = save_points_data(state, node_params)
-				save_frame_image(raw_frame, unique_base)
+				if unique_base is not None:
+					save_frame_image(raw_frame, unique_base)
 
 	finally:
 		stop_pipeline(pipeline)

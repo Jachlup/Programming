@@ -26,4 +26,3 @@ def get_frame(pipeline: rs.pipeline):
 def stop_pipeline(pipeline: rs.pipeline) -> None:
 	"""Stop the RealSense pipeline safely."""
 	pipeline.stop()
-

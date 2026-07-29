@@ -2,8 +2,8 @@ calibration:
   area_low_ratio: 0.45
   area_up_ratio: 0.45
   hue_margin: 10
-  max_area: 800 #393
-  min_area: 149 #149
+  max_area: 800
+  min_area: 149
   preset: wide
   red_lower_1:
   - 0
@@ -23,9 +23,53 @@ calibration:
   - 143
   sat_margin: 60
   val_margin: 60
+camera:
+  auto_exposure: true
+  exposure: null
+  fps: 60
+  gain: null
+  height: 480
+  width: 640
+dataset:
+  directory: datasets
+  frames_per_sample: 1
+  save_compensated_coordinates: true
+  save_feature_names: true
+  save_images: true
+  save_raw_coordinates: true
+display:
+  show_features: false
+  show_geometry: false
+  show_lines: true
+  show_outliers: true
+  show_points: true
+force_model:
+  maximum_calibrated_force_N: 40.0
+  minimum_calibrated_force_N: 5.0
+  model_path: null
+  model_type: null
 force_node:
   force_magnitude: 0.0
   node_number: 1
+geometry:
+  allow_scale_compensation: false
+  enabled_feature_groups:
+  - point_displacements
+  - length_changes
+  - relative_length_changes
+  - angle_changes
+  geometry_configuration_version: '1'
+  structural_connection_version: '1'
+  structural_connections:
+  - - LINE_A_00
+    - LINE_A_01
+  - - LINE_A_01
+    - LINE_A_02
+  - - LINE_B_00
+    - LINE_B_01
+  - - LINE_B_01
+    - LINE_B_02
+  transform_ransac_threshold_px: 3.0
 hough_circles:
   dp: 1
   max_radius: 20
@@ -51,3 +95,39 @@ presets:
     - 180
     - 255
     - 255
+reference:
+  minimum_valid_rigid_reference_points: 2
+  profile_path: reference-profile.json
+  rigid_reference_point_ids: []
+reference_ransac:
+  configuration_version: '1'
+  direction_rule: base_to_tip
+  distance_threshold_px: 10.0
+  enabled: true
+  expected_line_count: 2
+  expected_points_line_a: 9
+  expected_points_line_b: 11
+  iterations: 300
+  maximum_angle_difference_deg: 15.0
+  maximum_line_separation_px: null
+  maximum_mean_residual_px: 5.0
+  maximum_outlier_count: 3
+  minimum_inliers_per_line: 2
+  minimum_line_separation_px: 20.0
+  minimum_order_spacing_px: 2.0
+tracking:
+  assignment_method: hungarian
+  expected_deforming_point_count: 20
+  expected_reference_point_count: 2
+  maximum_adjacent_distance_ratio: 3.0
+  maximum_assignment_distance: 35.0
+  maximum_missing_frames: 5
+  maximum_optical_flow_error: 25.0
+  maximum_pyramid_level: 3
+  minimum_valid_points: 20
+  redetection_interval: 1
+  termination_count: 20
+  termination_epsilon: 0.03
+  window_size:
+  - 21
+  - 21

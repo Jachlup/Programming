@@ -71,6 +71,14 @@ class AppConfig:
 	circles: CircleDetectionConfig
 	presets: dict
 	force_node: ForcePointConfig
+	camera: dict = field(default_factory=dict)
+	reference_ransac: dict = field(default_factory=dict)
+	tracking: dict = field(default_factory=dict)
+	reference: dict = field(default_factory=dict)
+	geometry: dict = field(default_factory=dict)
+	dataset: dict = field(default_factory=dict)
+	force_model: dict = field(default_factory=dict)
+	display: dict = field(default_factory=dict)
 	def active_preset(self) -> HsvPreset:
 		"""Return the currently selected HsvPreset."""
 		return self.presets[self.calibration.preset]
@@ -96,7 +104,15 @@ def load_config() -> AppConfig:
 		calibration=CalibrationConfig(**raw["calibration"]),
 		circles=CircleDetectionConfig(**raw["hough_circles"]),
 		presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},
-		force_node=ForcePointConfig(**force_raw) # <-- Add this line
+		force_node=ForcePointConfig(**force_raw),
+		camera=raw.get("camera", {}),
+		reference_ransac=raw.get("reference_ransac", {}),
+		tracking=raw.get("tracking", {}),
+		reference=raw.get("reference", {}),
+		geometry=raw.get("geometry", {}),
+		dataset=raw.get("dataset", {}),
+		force_model=raw.get("force_model", {}),
+		display=raw.get("display", {}),
 	)
 
 
@@ -130,6 +146,9 @@ def save_config(cfg: AppConfig) -> None:
 		},
 		"force_node": asdict(cfg.force_node)  # <-- Added to seamlessly save the data
 	}
+	for section in ("camera", "reference_ransac", "tracking", "reference",
+					"geometry", "dataset", "force_model", "display"):
+		data[section] = getattr(cfg, section)
 	
 	with open(_config_path, "w") as f:
 		yaml.dump(data, f, default_flow_style=False)
@@ -305,22 +324,28 @@ def find_red_blob_data(frame, min_area: int = None, max_area: int = None):
 		if moments["m00"] == 0:
 			continue
 
-		cx = int(moments["m10"] / moments["m00"])
-		cy = int(moments["m01"] / moments["m00"])
+		cx = float(moments["m10"] / moments["m00"])
+		cy = float(moments["m01"] / moments["m00"])
 		x, y, w, h = cv2.boundingRect(contour)
 		contour_mask = np.zeros(mask.shape, dtype=np.uint8)
 		cv2.drawContours(contour_mask, [contour], -1, 255, thickness=cv2.FILLED)
 		mean_hsv = cv2.mean(hsv, mask=contour_mask)
-		center_hsv = tuple(int(value) for value in hsv[cy, cx])
+		center_hsv = tuple(int(value) for value in hsv[int(round(cy)), int(round(cx))])
+		perimeter = float(cv2.arcLength(contour, True))
+		circularity = 0.0 if perimeter <= 0 else float(4.0 * np.pi * area / (perimeter * perimeter))
+		detection_quality = float(np.clip(circularity, 0.0, 1.0))
 
 		blobs.append(
 			{
 				"center": (cx, cy),
 				"area": area,
 				"bbox": (x, y, w, h),
+				"bounding_box": (x, y, w, h),
 				"contour": contour,
 				"center_hsv": center_hsv,
 				"mean_hsv": tuple(float(value) for value in mean_hsv[:3]),
+				"detection_quality": detection_quality,
+				"circle_validation": None,
 			}
 		)
 
@@ -393,7 +418,8 @@ def draw_blob_calibration_info(frame, blob):
 	if blob is None:
 		return frame
 
-	cx, cy = blob["center"]
+	cx_f, cy_f = blob["center"]
+	cx, cy = int(round(cx_f)), int(round(cy_f))
 	area = blob["area"]
 	sample_hsv = blob.get("sample_hsv", blob.get("click_hsv"))
 	if sample_hsv is None:
@@ -419,11 +445,12 @@ def draw_blob_calibration_info(frame, blob):
 def draw_centers_with_positions(frame, centers):
 	"""Draw blob centers and annotate them with pixel coordinates."""
 	for idx, (cx, cy) in enumerate(centers, start=1):
-		cv2.circle(frame, (cx, cy), 6, (0, 0, 255), -1)
+		draw_center = (int(round(cx)), int(round(cy)))
+		cv2.circle(frame, draw_center, 6, (0, 0, 255), -1)
 		cv2.putText(
 			frame,
 			f"{idx}: ({cx}, {cy})",
-			(cx + 8, cy - 8),
+			(draw_center[0] + 8, draw_center[1] - 8),
 			cv2.FONT_HERSHEY_SIMPLEX,
 			0.5,
 			(0, 0, 255),
@@ -758,10 +785,13 @@ def update_and_draw_tracked_points(frame, blobs, tracked_points, max_distance=50
 
     # Render tracking markers onto the display image
     for idx, pt in enumerate(tracked_points):
+        draw_pt = (int(round(pt[0])), int(round(pt[1])))
         # Draw target reticle (Cyan / Yellow inner ring)
-        cv2.circle(frame, pt, 10, (255, 255, 0), 2)
-        cv2.circle(frame, pt, 3, (0, 255, 255), -1)
-        cv2.putText(frame, f"ID_{idx}", (pt[0] + 12, pt[1] - 8),
+
+
+        cv2.circle(frame, draw_pt, 10, (255, 255, 0), 2)
+        cv2.circle(frame, draw_pt, 3, (0, 255, 255), -1)
+        cv2.putText(frame, f"ID_{idx}", (draw_pt[0] + 12, draw_pt[1] - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
 
     return frame
@@ -791,23 +821,28 @@ def compute_and_draw_artificial_point(frame, tracked_points, angle_deg=25):
     dy = p1[1] - p0[1]
 
     # Calculate rotated coordinates relative to the pivot (p0)
-    x_art = int(round(p0[0] + dx * cos_t - dy * sin_t))
-    y_art = int(round(p0[1] + dx * sin_t + dy * cos_t))
+    x_art = float(p0[0] + dx * cos_t - dy * sin_t)
+    y_art = float(p0[1] + dx * sin_t + dy * cos_t)
     art_point = (x_art, y_art)
+
+    # Keep sub-pixel coordinates internally and convert only for OpenCV drawing.
+    draw_p0 = (int(round(p0[0])), int(round(p0[1])))
+    draw_p1 = (int(round(p1[0])), int(round(p1[1])))
+    draw_art = (int(round(x_art)), int(round(y_art)))
 
     # --- Visualizations ---
     # 1. Draw a subtle baseline connecting the original two tracked points
-    cv2.line(frame, p0, p1, (180, 180, 180), 1, cv2.LINE_AA)
+    cv2.line(frame, draw_p0, draw_p1, (180, 180, 180), 1, cv2.LINE_AA)
     
     # 2. Draw a thick Magenta line indicating the pivoted offset arm
-    cv2.line(frame, p0, art_point, (255, 0, 255), 2, cv2.LINE_AA)
+    cv2.line(frame, draw_p0, draw_art, (255, 0, 255), 2, cv2.LINE_AA)
     
     # 3. Draw the Artificial Point (Solid Magenta circle with a white border)
-    cv2.circle(frame, art_point, 6, (255, 0, 255), -1)
-    cv2.circle(frame, art_point, 10, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.circle(frame, draw_art, 6, (255, 0, 255), -1)
+    cv2.circle(frame, draw_art, 10, (255, 255, 255), 1, cv2.LINE_AA)
     
     # 4. Label the artificial point
-    cv2.putText(frame, "ART_PT", (x_art + 14, y_art + 5),
+    cv2.putText(frame, "ART_PT", (draw_art[0] + 14, draw_art[1] + 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1, cv2.LINE_AA)
 
     return art_point, frame
@@ -863,7 +898,11 @@ def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
         
         # Optional: Visual confirmation overlay for the artificial point
         if frame is not None:
-            cv2.circle(frame, artificial_point, 14, (255, 255, 0), 1, cv2.LINE_AA)
+            draw_artificial = (
+                int(round(artificial_point[0])),
+                int(round(artificial_point[1])),
+            )
+            cv2.circle(frame, draw_artificial, 14, (255, 255, 0), 1, cv2.LINE_AA)
 
     # Convert to a standard NumPy array for downstream data applications
     return np.array(collected_points, dtype=np.int32), frame
@@ -873,10 +912,10 @@ def filter_and_collect_points(blobs, circles, artificial_point, frame=None):
 def create_node_trackbars(window_name="Force Node"):
     """Create a separate window with trackbars for collecting force magnitude [N] and node number associociated with this data"""
     cv2.namedWindow(window_name)
-    cv2.createTrackbar("Force Magnitude [N]", window_name, 0, 20, lambda v: None)
+    cv2.createTrackbar("Force Magnitude [N]", window_name, 0, 40, lambda v: None)
     cv2.createTrackbar("Node Number", window_name, 1, 20, lambda v: None)
 
-def get_node_params_from_trackbars(window_name="Force Node Tuning"):
+def get_node_params_from_trackbars(window_name="Force Node"):
 	"""Read current trackbar values and return them as a dict.
 	Falls back to default values if the window does not exist yet."""
 	if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
@@ -897,14 +936,20 @@ def _generate_unique_base_name(node_number: int, force_magnitude: float) -> str:
     return f"node_{node_number}_force_{force_str}N_{timestamp}"
 
 
-def save_points_data(state: dict, node_params: dict) -> str:
+def save_points_data(state: dict, node_params: dict) -> Optional[str]:
     """
-    Saves detected points into two separate text files inside a 'node forces' subfolder.
+    Save the displayed final points, including the artificial point, to one file.
+
+    The node number comes from the Force Node window. The saved point count and
+    ordering match ``final_points_array`` shown by the application.
     Returns the unique base name string so the image saver can mirror it.
     """
     # Extract the metadata params
     node_num = node_params.get("node_number", 1)
     force_mag = node_params.get("force_magnitude", 0)
+    if state.get("artificial_point") is None:
+        print("Data not saved: select two tracked points to create the artificial point.")
+        return None
     
     # Generate the unified unique filename
     base_name = _generate_unique_base_name(node_num, force_mag)
@@ -914,38 +959,28 @@ def save_points_data(state: dict, node_params: dict) -> str:
     node_forces_dir = os.path.join(current_dir, "node forces")
     os.makedirs(node_forces_dir, exist_ok=True)
     
-    # Target file paths inside the 'node forces' folder
-    file_with_art_path = os.path.join(node_forces_dir, f"{base_name}_with_art.txt")
-    file_no_art_path = os.path.join(node_forces_dir, f"{base_name}_no_art.txt")
+    # Do not create a second file that omits the artificial point.
+    points_file_path = os.path.join(node_forces_dir, f"{base_name}_points.txt")
     
     # Extract point collections from the application state
     all_points = state.get("final_points_array", np.array([]))
-    artificial_point = state.get("artificial_point", None)
-    
-    # Isolate points without the artificial addition
-    if artificial_point is not None and len(all_points) > 0:
-        points_no_art = all_points[:-1]
-    else:
-        points_no_art = all_points
-
     # Standard header metadata format
-    header = f"Node Number: {node_num}\nForce Magnitude [N]: {force_mag}\n"
+    header = (
+        f"Node Number: {node_num}\n"
+        f"Force Magnitude [N]: {force_mag}\n"
+        f"Displayed Point Count: {len(all_points)}\n"
+    )
 
-    # File 1: Save ALL points (including artificial tracking target)
-    with open(file_with_art_path, "w") as f:
+    with open(points_file_path, "w") as f:
         f.write(header)
-        f.write("--- Points (with Artificial Point) ---\n")
-        for pt in all_points:
-            f.write(f"{pt[0]},{pt[1]}\n")
-            
-    # File 2: Save ONLY natural points (excluding artificial tracking target)
-    with open(file_no_art_path, "w") as f:
-        f.write(header)
-        f.write("--- Points (without Artificial Point) ---\n")
-        for pt in points_no_art:
-            f.write(f"{pt[0]},{pt[1]}\n")
-            
-    print(f"Data saved successfully:\n  -> node forces/{os.path.basename(file_with_art_path)}\n  -> node forces/{os.path.basename(file_no_art_path)}")
+        f.write("--- Displayed Points (including Artificial Point) ---\n")
+        for point_number, pt in enumerate(all_points, start=1):
+            f.write(f"Point {point_number}: {pt[0]},{pt[1]}\n")
+
+    print(
+        "Data saved successfully:\n"
+        f"  -> node forces/{os.path.basename(points_file_path)}"
+    )
     return base_name
 
 
