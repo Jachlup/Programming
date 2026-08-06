@@ -1,26 +1,26 @@
 calibration:
-  area_low_ratio: 0.45
-  area_up_ratio: 0.45
+  area_low_ratio: 0.6
+  area_up_ratio: 0.3
   hue_margin: 10
-  max_area: 800
-  min_area: 149
+  max_area: 668
+  min_area: 200
   preset: wide
   red_lower_1:
   - 0
-  - 150
-  - 23
+  - 195
+  - 2
   red_lower_2:
-  - 170
-  - 150
-  - 23
+  - 174
+  - 195
+  - 2
   red_upper_1:
-  - 10
+  - 14
   - 255
-  - 143
+  - 122
   red_upper_2:
   - 180
   - 255
-  - 143
+  - 122
   sat_margin: 60
   val_margin: 60
 camera:
@@ -117,9 +117,9 @@ reference:
   minimum_valid_rigid_reference_points: 2
   origin_identity_lock_distance_px: 2.0
   origin_initialization_max_distance_px: 2.0
+  origin_maximum_assignment_distance: 20.0
   origin_maximum_missing_frames: 5
   origin_no_flow_max_distance_px: 0.25
-  origin_maximum_assignment_distance: 20.0
   origin_reacquisition_max_distance_px: 20.0
   origin_reacquisition_policy: manual_confirmation
   origin_selection_max_distance_px: 25.0
@@ -154,8 +154,8 @@ tracking:
   maximum_missing_frames: 5
   maximum_optical_flow_error: 25.0
   maximum_pyramid_level: 3
-  minimum_valid_points: 20
   minimum_tracked_only_quality: 0.25
+  minimum_valid_points: 20
   redetection_interval: 1
   termination_count: 20
   termination_epsilon: 0.03
@@ -166,6 +166,6 @@ training:
   baseline_model: ridge
   model_name: force-ridge
   model_version: '1'
-  ridge_alpha: 1.0e-06
   random_seed: 42
+  ridge_alpha: 1.0e-06
   validation_fraction: 0.2

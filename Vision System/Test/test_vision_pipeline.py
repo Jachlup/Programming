@@ -17,6 +17,16 @@ def _configuration():
 		return yaml.safe_load(stream)
 
 
+def _synthetic_reference_configuration(config):
+	return {
+		**config["reference_ransac"],
+		**config["reference"],
+		"expected_points_line_a": 9,
+		"expected_points_line_b": 11,
+		"expected_deforming_point_count": 20,
+	}
+
+
 def _detections():
 	result = [
 		{"center": (float(x), 100.0 + float(x) * 0.01), "detection_quality": 1.0}
@@ -37,7 +47,7 @@ def _detections():
 def test_unequal_line_counts_and_permanent_ids():
 	config = _configuration()
 	result = initialise_reference(
-		_detections(), {**config["reference_ransac"], **config["reference"]},
+		_detections(), _synthetic_reference_configuration(config),
 		(640, 480), [21, 22], reference_origin_detection_index=20,
 	)
 	assert result.valid
@@ -49,12 +59,13 @@ def test_unequal_line_counts_and_permanent_ids():
 
 def test_tracking_and_feature_order_are_valid():
 	config = _configuration()
+	reference_config = _synthetic_reference_configuration(config)
 	result = initialise_reference(
-		_detections(), {**config["reference_ransac"], **config["reference"]},
+		_detections(), reference_config,
 		(640, 480), [21, 22], reference_origin_detection_index=20,
 	)
 	profile = make_reference_profile(
-		result, (640, 480), config["reference_ransac"], config["geometry"]
+		result, (640, 480), reference_config, config["geometry"]
 	)
 	tracker = PointTracker(profile, {**config["tracking"], **config["reference"]})
 	points = tracker.update(np.zeros((480, 640), np.uint8), _detections())

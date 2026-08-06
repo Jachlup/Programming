@@ -1,0 +1,18 @@
+dataset_schema_version: '2'
+feature_schema_version: '2'
+experiment_id: exp1
+acquisition_batch_id: 20260729T190013778595Z
+created_at: '2026-07-29T19:00:13.778737+00:00'
+reference_profile_identifier: finray-20260729T185832Z
+reference_profile_configuration_version: '1'
+reference_origin_point_id: REFERENCE_ORIGIN
+reference_profile_image_resolution:
+- 640
+- 480
+reference_profile_expected_points:
+  LINE_A: 8
+  LINE_B: 8
+reference_profile_quality: 0.9494126851460685
+structural_connection_version: '1'
+geometry_configuration_identifier: '2'
+save_images: true

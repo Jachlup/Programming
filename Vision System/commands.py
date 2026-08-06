@@ -214,6 +214,7 @@ def tracking_status(args, state):
 		print(f"Tracking valid={tracker.valid}, quality={tracker.quality:.3f}")
 
 
+
 def origin_reacquire(args, state):
 	_no_args(args, "origin_reacquire")
 	state.begin_origin_reacquisition()
