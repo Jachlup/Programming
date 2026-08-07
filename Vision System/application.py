@@ -820,6 +820,59 @@ class ApplicationState:
 			return "; ".join(errors) if errors else "Geometry is invalid"
 		return None
 
+	def status_snapshot(self) -> dict[str, Any]:
+		"""Return detached scalar state for GUI/status consumers."""
+		tracker = self.tracker
+		geometry = self.current_geometry
+		proposal = self.proposed_ransac_result
+		session = self.dataset_session
+		profile = self.reference_profile
+		reacquisition_required = bool(
+			tracker is not None and tracker.origin_reacquisition_required
+		)
+		recording_reason = self._invalid_frame_reason()
+		return {
+			"frame_number": self.current_frame_number,
+			"frame_size": (
+				None if self.current_raw_frame is None
+				else (self.current_raw_frame.shape[1], self.current_raw_frame.shape[0])
+			),
+			"mode": self.mode.value,
+			"reference_setup_mode": self.reference_setup_mode.value,
+			"reference_configured": profile is not None,
+			"reference_profile_id": "" if profile is None else profile.profile_id,
+			"reference_origin_selection": self.reference_origin_selection_mode,
+			"origin_reacquisition_selection": self.origin_reacquisition_selection_mode,
+			"origin_reacquisition_required": reacquisition_required,
+			"origin_candidate_index": self.selected_origin_detection_index,
+			"proposal_available": proposal is not None,
+			"proposal_valid": None if proposal is None else proposal.valid,
+			"proposal_quality": None if proposal is None else proposal.quality,
+			"proposal_errors": [] if proposal is None else list(proposal.fatal_errors),
+			"proposal_warnings": [] if proposal is None else list(proposal.warnings),
+			"tracking_active": tracker is not None and self.tracking_enabled,
+			"tracking_valid": False if tracker is None else tracker.valid,
+			"tracking_quality": 0.0 if tracker is None else tracker.quality,
+			"detected_marker_count": len(self.current_detections),
+			"geometry_valid": False if geometry is None else geometry.valid,
+			"geometry_quality": 0.0 if geometry is None else geometry.quality,
+			"origin_valid": False if geometry is None else geometry.origin_valid,
+			"runtime_warnings": list(self.runtime_warnings),
+			"display_options": {
+				name: bool(getattr(self.display_options, name))
+				for name in self.display_options.__dataclass_fields__
+			},
+			"dataset_active": session is not None,
+			"dataset_experiment_id": "" if session is None else session.experiment_id,
+			"dataset_force_N": self.known_reference_force,
+			"dataset_accepted": 0 if session is None else session.accepted,
+			"dataset_rejected": 0 if session is None else session.rejected,
+			"dataset_pending": self.pending_dataset_frames,
+			"dataset_last_result": self.last_dataset_result,
+			"recording_valid": recording_reason is None,
+			"recording_invalid_reason": recording_reason or "",
+		}
+
 	def process_pending_dataset_sample(self) -> bool | None:
 		if self.dataset_session is None or self.pending_dataset_frames <= 0:
 			return None

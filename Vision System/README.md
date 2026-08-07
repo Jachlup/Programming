@@ -48,6 +48,45 @@ reference profile. Restart the program after editing the YAML file.
 
 ## Starting the program
 
+### PySide6 graphical interface
+
+Install the GUI and test dependencies in the project environment once:
+
+```bash
+cd "/home/janek/Desktop/Programming/Programming/Vision System"
+../../virtual-env/bin/pip install -r requirements-gui.txt
+```
+
+Start the graphical application:
+
+```bash
+../../virtual-env/bin/python gui_main.py
+```
+
+Use `--no-camera` to inspect the interface or run it on a computer without a
+connected RealSense camera:
+
+```bash
+../../virtual-env/bin/python gui_main.py --no-camera
+```
+
+The window contains Camera, Reference setup, Tuning, and Dataset tabs. The
+command console at the bottom accepts every command in the existing `COMMANDS`
+registry. Buttons and checkboxes use that same command layer. Camera acquisition
+and image processing run on one dedicated Qt worker thread; closing the window
+stops that worker and releases the camera.
+
+The GUI controls only the camera vision pipeline. It does not import or control
+the motor/actuator project.
+
+The Tuning tab distinguishes editor values, values applied to the running
+process, and values saved in `camera-config.yaml`. Apply validates editor values;
+Save Configuration writes the applied values atomically. Camera-setting changes
+restart the camera. Resolution and structural reference changes require clearing
+an accepted profile first.
+
+### Terminal/OpenCV interface
+
 Connect the RealSense camera, open a terminal, and run:
 
 ```bash
@@ -353,6 +392,15 @@ QT_LOGGING_RULES="qt.qpa.events.reader.debug=false" python main.py
 If it prints continuously with increasing numbers while the window freezes,
 record several consecutive lines and investigate the GUI event loop.
 
+## Automated tests
+
+The full hardware-free suite, including offscreen Qt widget and worker tests, is
+run with:
+
+```bash
+QT_QPA_PLATFORM=offscreen ../../virtual-env/bin/python -m pytest -q Test
+```
+
 ### Lines are not visible
 
 Run:
@@ -378,4 +426,3 @@ dataset_status
 Also inspect the warnings in the camera window and
 `rejections.csv`. Recording requires a valid origin, valid tracking, and valid
 geometry.
-

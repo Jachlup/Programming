@@ -24,7 +24,7 @@ from processing import (
 	save_frame_image,
 	update_area_tuning_from_trackbars,
 )
-#
+
 
 WINDOW_NAME = "Red Blob Detector"
 

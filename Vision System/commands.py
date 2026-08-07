@@ -10,7 +10,7 @@ from typing import Callable
 
 import yaml
 
-from processing import cfg, save_config
+from processing import save_config
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,7 @@ def dataset_force(args, state):
 def dataset_sample(args, state):
 	if len(args) > 1:
 		raise ValueError("Usage: dataset_sample [FRAME_COUNT]")
-	default_count = int(cfg.dataset.get("frames_per_sample", 1))
+	default_count = int(state.config.dataset.get("frames_per_sample", 1))
 	count = _positive_count(args[0]) if args else _positive_count(str(default_count))
 	state.queue_dataset_samples(count)
 	print(f"Queued {count} frame(s); invalid frames will remain pending for retry.")
@@ -319,7 +319,7 @@ def force_status(args, state):
 
 def save_configuration(args, state):
 	_no_args(args, "save_config")
-	save_config(cfg)
+	save_config(state.config)
 	print("Configuration saved.")
 
 

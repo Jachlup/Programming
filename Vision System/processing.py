@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import copy
 import os
+from pathlib import Path
+import tempfile
 import cv2
 import numpy as np
 import yaml
@@ -92,18 +95,20 @@ class AppConfig:
 # ---------------------------------------------------------------------------
 
 _config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera-config.yaml")
+_default_config_path = os.path.join(
+	os.path.dirname(os.path.abspath(__file__)), "camera-config.defaults.yaml"
+)
 
 
-def load_config() -> AppConfig:
-	if not os.path.exists(_config_path):
-		raise FileNotFoundError(f"Config file not found: {_config_path}")
-	with open(_config_path, "r") as f:
-		raw = yaml.safe_load(f)
-	
+def config_from_mapping(raw: dict[str, Any]) -> AppConfig:
+	"""Build and validate an application configuration from a mapping."""
+	if not isinstance(raw, dict):
+		raise ValueError("Configuration root must be a YAML mapping")
+
 	# Handle missing key seamlessly for backwards-compatibility
 	force_raw = raw.get("force_node", {"node_number": 1, "force_magnitude": 0.0})
 
-	return AppConfig(
+	result = AppConfig(
 		calibration=CalibrationConfig(**raw["calibration"]),
 		circles=CircleDetectionConfig(**raw["hough_circles"]),
 		presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},
@@ -118,12 +123,23 @@ def load_config() -> AppConfig:
 		display=raw.get("display", {}),
 		training=raw.get("training", {}),
 	)
+	validate_config(result)
+	return result
 
 
-def save_config(cfg: AppConfig) -> None:
-	"""Save current AppConfig back to camera-config.yaml."""
-	cal = cfg.calibration
-	data = {
+def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
+	config_path = os.fspath(path or _config_path)
+	if not os.path.exists(config_path):
+		raise FileNotFoundError(f"Config file not found: {config_path}")
+	with open(config_path, "r", encoding="utf-8") as f:
+		raw = yaml.safe_load(f)
+	return config_from_mapping(raw)
+
+
+def config_to_mapping(config: AppConfig) -> dict[str, Any]:
+	"""Return a detached, YAML-safe representation of an ``AppConfig``."""
+	cal = config.calibration
+	data: dict[str, Any] = {
 		"calibration": {
 			"min_area":       cal.min_area,
 			"max_area":       cal.max_area,
@@ -138,7 +154,7 @@ def save_config(cfg: AppConfig) -> None:
 			"red_lower_2":    cal.red_lower_2.tolist(),
 			"red_upper_2":    cal.red_upper_2.tolist(),
 		},
-		"hough_circles": asdict(cfg.circles),
+		"hough_circles": asdict(config.circles),
 		"presets": {
 			name: {
 				"red_lower_1": preset.red_lower_1.tolist(),
@@ -146,16 +162,137 @@ def save_config(cfg: AppConfig) -> None:
 				"red_lower_2": preset.red_lower_2.tolist(),
 				"red_upper_2": preset.red_upper_2.tolist(),
 			}
-			for name, preset in cfg.presets.items()
+			for name, preset in config.presets.items()
 		},
-		"force_node": asdict(cfg.force_node)  # <-- Added to seamlessly save the data
+		"force_node": asdict(config.force_node),
 	}
 	for section in ("camera", "reference_ransac", "tracking", "reference",
 					"geometry", "dataset", "force_model", "display", "training"):
-		data[section] = getattr(cfg, section)
-	
-	with open(_config_path, "w") as f:
-		yaml.dump(data, f, default_flow_style=False)
+		data[section] = copy.deepcopy(getattr(config, section))
+	return data
+
+
+def validate_config(config: AppConfig) -> None:
+	"""Validate cross-field constraints used by the live vision pipeline."""
+	cal = config.calibration
+	if int(cal.min_area) < 1:
+		raise ValueError("calibration.min_area must be positive")
+	if cal.max_area is not None and int(cal.max_area) < int(cal.min_area):
+		raise ValueError("calibration.max_area must be at least min_area")
+	for name in ("area_low_ratio", "area_up_ratio"):
+		if float(getattr(cal, name)) < 0.0:
+			raise ValueError(f"calibration.{name} must be non-negative")
+	for name, maximum in (("hue_margin", 180), ("sat_margin", 255), ("val_margin", 255)):
+		value = int(getattr(cal, name))
+		if value < 0 or value > maximum:
+			raise ValueError(f"calibration.{name} must be in 0..{maximum}")
+	if cal.preset not in config.presets:
+		raise ValueError(f"Unknown calibration preset: {cal.preset}")
+	for name in ("red_lower_1", "red_upper_1", "red_lower_2", "red_upper_2"):
+		values = np.asarray(getattr(cal, name))
+		if values.shape != (3,):
+			raise ValueError(f"calibration.{name} must contain three values")
+		if not (0 <= int(values[0]) <= 180 and np.all((values[1:] >= 0) & (values[1:] <= 255))):
+			raise ValueError(f"calibration.{name} contains an invalid HSV value")
+
+	circles = config.circles
+	for name in ("dp", "min_dist", "param1", "param2"):
+		if int(getattr(circles, name)) < 1:
+			raise ValueError(f"hough_circles.{name} must be positive")
+	if circles.min_radius < 0 or circles.max_radius < circles.min_radius:
+		raise ValueError("Hough circle radius limits are invalid")
+
+	for name in ("width", "height", "fps"):
+		if int(config.camera.get(name, 0)) < 1:
+			raise ValueError(f"camera.{name} must be positive")
+
+	ransac = config.reference_ransac
+	for name in ("expected_points_line_a", "expected_points_line_b", "iterations",
+				 "minimum_inliers_per_line"):
+		if int(ransac.get(name, 0)) < 1:
+			raise ValueError(f"reference_ransac.{name} must be positive")
+	expected_total = int(ransac["expected_points_line_a"]) + int(
+		ransac["expected_points_line_b"]
+	)
+	if int(ransac["minimum_inliers_per_line"]) > min(
+		int(ransac["expected_points_line_a"]),
+		int(ransac["expected_points_line_b"]),
+	):
+		raise ValueError("minimum_inliers_per_line exceeds an expected line count")
+	configured_total = int(config.tracking.get("expected_deforming_point_count", expected_total))
+	if configured_total != expected_total:
+		raise ValueError(
+			"tracking.expected_deforming_point_count must equal the two RANSAC line counts"
+		)
+	if int(config.tracking.get("expected_reference_origin_point_count", 1)) != 1:
+		raise ValueError("Exactly one reference-origin point must be configured")
+	for section, names in (
+		(config.tracking, ("minimum_tracked_only_quality",)),
+		(config.reference, ("minimum_origin_tracking_quality",)),
+		(config.geometry, (
+			"minimum_deforming_tracking_quality",
+			"minimum_rigid_reference_tracking_quality",
+		)),
+	):
+		for name in names:
+			value = float(section.get(name, 0.0))
+			if value < 0.0 or value > 1.0:
+				raise ValueError(f"{name} must be in 0..1")
+	mode = str(config.geometry.get("geometry_reference_mode", "translation_only"))
+	if mode not in {"translation_only", "translation_and_rotation"}:
+		raise ValueError("geometry.geometry_reference_mode is invalid")
+	if int(config.dataset.get("frames_per_sample", 1)) < 1:
+		raise ValueError("dataset.frames_per_sample must be positive")
+	if int(config.dataset.get("maximum_invalid_frame_retries", 1)) < 1:
+		raise ValueError("dataset.maximum_invalid_frame_retries must be positive")
+
+
+def update_config_in_place(target: AppConfig, source: AppConfig) -> None:
+	"""Copy configuration values while preserving the shared object identity."""
+	validate_config(source)
+	target.calibration = copy.deepcopy(source.calibration)
+	target.circles = copy.deepcopy(source.circles)
+	target.presets = copy.deepcopy(source.presets)
+	target.force_node = copy.deepcopy(source.force_node)
+	for section in ("camera", "reference_ransac", "tracking", "reference",
+					"geometry", "dataset", "force_model", "display", "training"):
+		setattr(target, section, copy.deepcopy(getattr(source, section)))
+
+
+def load_default_config() -> AppConfig:
+	"""Load the packaged factory configuration used by the GUI reset action."""
+	return load_config(_default_config_path)
+
+
+def save_config(
+	config: AppConfig,
+	path: str | os.PathLike[str] | None = None,
+) -> None:
+	"""Atomically save a validated configuration to YAML."""
+	validate_config(config)
+	target = Path(path or _config_path)
+	target.parent.mkdir(parents=True, exist_ok=True)
+	data = config_to_mapping(config)
+	temporary_path: Path | None = None
+	try:
+		with tempfile.NamedTemporaryFile(
+			"w", encoding="utf-8", dir=target.parent,
+			prefix=f".{target.name}.", suffix=".tmp", delete=False,
+		) as stream:
+			temporary_path = Path(stream.name)
+			yaml.safe_dump(data, stream, default_flow_style=False, sort_keys=False)
+			stream.flush()
+			os.fsync(stream.fileno())
+		# Reject a malformed serialization before replacing the user's file.
+		load_config(temporary_path)
+		os.replace(temporary_path, target)
+	except Exception:
+		if temporary_path is not None:
+			try:
+				temporary_path.unlink(missing_ok=True)
+			except OSError:
+				pass
+		raise
 
 # ---------------------------------------------------------------------------
 # Module-level config instance (loaded once at import time)
