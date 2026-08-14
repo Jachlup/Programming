@@ -66,12 +66,14 @@ CMAKE_BINARY_DIR = /home/janek/Desktop/Programming/Programming/Motor/build
 all: CMakeFiles/logger.dir/all
 all: CMakeFiles/gripper_lib.dir/all
 all: CMakeFiles/gripper_control.dir/all
+all: CMakeFiles/gripper_bridge.dir/all
 .PHONY : all
 
 # The main recursive "codegen" target.
 codegen: CMakeFiles/logger.dir/codegen
 codegen: CMakeFiles/gripper_lib.dir/codegen
 codegen: CMakeFiles/gripper_control.dir/codegen
+codegen: CMakeFiles/gripper_bridge.dir/codegen
 .PHONY : codegen
 
 # The main recursive "preinstall" target.
@@ -82,6 +84,7 @@ preinstall:
 clean: CMakeFiles/logger.dir/clean
 clean: CMakeFiles/gripper_lib.dir/clean
 clean: CMakeFiles/gripper_control.dir/clean
+clean: CMakeFiles/gripper_bridge.dir/clean
 clean: shared_data/clean
 clean: candlelib/clean
 .PHONY : clean
@@ -131,7 +134,7 @@ shared_data/clean:
 CMakeFiles/logger.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/logger.dir/build.make CMakeFiles/logger.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/logger.dir/build.make CMakeFiles/logger.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=23,24 "Built target logger"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=25,26 "Built target logger"
 .PHONY : CMakeFiles/logger.dir/all
 
 # Build rule for subdir invocation for target.
@@ -148,7 +151,7 @@ logger: CMakeFiles/logger.dir/rule
 # codegen rule for target.
 CMakeFiles/logger.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/logger.dir/build.make CMakeFiles/logger.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=23,24 "Finished codegen for target logger"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=25,26 "Finished codegen for target logger"
 .PHONY : CMakeFiles/logger.dir/codegen
 
 # clean rule for target.
@@ -164,7 +167,7 @@ CMakeFiles/gripper_lib.dir/all: CMakeFiles/logger.dir/all
 CMakeFiles/gripper_lib.dir/all: candlelib/CMakeFiles/candle.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_lib.dir/build.make CMakeFiles/gripper_lib.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_lib.dir/build.make CMakeFiles/gripper_lib.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=21,22 "Built target gripper_lib"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=23,24 "Built target gripper_lib"
 .PHONY : CMakeFiles/gripper_lib.dir/all
 
 # Build rule for subdir invocation for target.
@@ -181,7 +184,7 @@ gripper_lib: CMakeFiles/gripper_lib.dir/rule
 # codegen rule for target.
 CMakeFiles/gripper_lib.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_lib.dir/build.make CMakeFiles/gripper_lib.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=21,22 "Finished codegen for target gripper_lib"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=23,24 "Finished codegen for target gripper_lib"
 .PHONY : CMakeFiles/gripper_lib.dir/codegen
 
 # clean rule for target.
@@ -198,7 +201,7 @@ CMakeFiles/gripper_control.dir/all: CMakeFiles/gripper_lib.dir/all
 CMakeFiles/gripper_control.dir/all: candlelib/CMakeFiles/candle.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=19,20 "Built target gripper_control"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=21,22 "Built target gripper_control"
 .PHONY : CMakeFiles/gripper_control.dir/all
 
 # Build rule for subdir invocation for target.
@@ -215,13 +218,47 @@ gripper_control: CMakeFiles/gripper_control.dir/rule
 # codegen rule for target.
 CMakeFiles/gripper_control.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=19,20 "Finished codegen for target gripper_control"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=21,22 "Finished codegen for target gripper_control"
 .PHONY : CMakeFiles/gripper_control.dir/codegen
 
 # clean rule for target.
 CMakeFiles/gripper_control.dir/clean:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/clean
 .PHONY : CMakeFiles/gripper_control.dir/clean
+
+#=============================================================================
+# Target rules for target CMakeFiles/gripper_bridge.dir
+
+# All Build rule for target.
+CMakeFiles/gripper_bridge.dir/all: CMakeFiles/logger.dir/all
+CMakeFiles/gripper_bridge.dir/all: CMakeFiles/gripper_lib.dir/all
+CMakeFiles/gripper_bridge.dir/all: candlelib/CMakeFiles/candle.dir/all
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/depend
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=19,20 "Built target gripper_bridge"
+.PHONY : CMakeFiles/gripper_bridge.dir/all
+
+# Build rule for subdir invocation for target.
+CMakeFiles/gripper_bridge.dir/rule: cmake_check_build_system
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles 24
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/gripper_bridge.dir/all
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles 0
+.PHONY : CMakeFiles/gripper_bridge.dir/rule
+
+# Convenience name for target.
+gripper_bridge: CMakeFiles/gripper_bridge.dir/rule
+.PHONY : gripper_bridge
+
+# codegen rule for target.
+CMakeFiles/gripper_bridge.dir/codegen:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/codegen
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles --progress-num=19,20 "Finished codegen for target gripper_bridge"
+.PHONY : CMakeFiles/gripper_bridge.dir/codegen
+
+# clean rule for target.
+CMakeFiles/gripper_bridge.dir/clean:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/clean
+.PHONY : CMakeFiles/gripper_bridge.dir/clean
 
 #=============================================================================
 # Target rules for target candlelib/CMakeFiles/candle.dir

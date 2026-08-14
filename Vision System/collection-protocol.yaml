@@ -1,0 +1,26 @@
+collection_protocol:
+  experiment_id: finger_force_operator_calibration
+
+  # Force is confirmed by the operator. It is never inferred from motor torque.
+  force_levels_N: [0.0]
+  repetitions: 1
+  samples_per_step: 1
+  sequence: loading
+  require_zero_force_baseline: true
+
+  settling_time_s: 0.5
+  sample_interval_ms: 100
+  required_stability_duration_s: 0.5
+  require_operator_confirmation: true
+
+  # Motor torque is selected separately in the Motor tab. The workflow records
+  # its telemetry but does not convert it into a force label.
+  use_motor: true
+  maximum_motor_telemetry_age_s: 0.25
+  maximum_motor_velocity_rad_s: 0.02
+  maximum_torque_variation_Nm: 0.1
+
+  minimum_tracking_quality: 0.5
+  minimum_origin_quality: 0.5
+  minimum_geometry_quality: 0.5
+  maximum_feature_movement: 0.25

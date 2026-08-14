@@ -1,0 +1,27 @@
+motor:
+  backend: hardware
+  can_id: 21
+  closing_direction: -1
+  homing_torque_Nm: -0.6
+  maximum_closing_torque_Nm: 4.0
+  current_limit_A: 0.5
+  maximum_controller_torque_Nm: 10.0
+  minimum_position_rad: -1.0
+  maximum_position_rad: 2.2
+  open_position_rad: 2.0
+  position_tolerance_rad: 0.5
+  profile_velocity_rad_s: 5.0
+  profile_acceleration_rad_s2: 20.0
+  homing_timeout_s: 5.0
+  movement_timeout_s: 5.0
+  stall_epsilon_rad: 0.01
+  stall_duration_s: 0.1
+  maximum_temperature_C: 50.0
+  feedback_interval_ms: 20
+  disable_after_stop: true
+  require_homing: true
+  torque_ramp_Nm_s: 0.5
+  torque_tolerance_Nm: 0.1
+  torque_reduction_backoff_rad: 0.3
+  pulley_radius_m: null
+  efficiency: null

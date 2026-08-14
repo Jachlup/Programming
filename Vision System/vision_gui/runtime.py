@@ -57,11 +57,14 @@ class CameraWorker(QObject):
 	command_completed = Signal(str, bool)
 	configuration_applied = Signal(object)
 	configuration_saved = Signal(object)
+	experiment_batch_queued = Signal(str, bool, str)
+	model_activation_completed = Signal(str, bool, str)
 	shutdown_complete = Signal()
 
 	def __init__(self, state: ApplicationState | None = None) -> None:
 		super().__init__()
 		self.state = state or ApplicationState()
+		self._latest_motor_telemetry: dict | None = None
 		self._pipeline = None
 		self._paused = False
 		self._timer = QTimer(self)
@@ -109,6 +112,7 @@ class CameraWorker(QObject):
 				height=int(camera.get("height", 480)),
 				fps=int(camera.get("fps", 60)),
 				camera_options=camera,
+				warning_callback=lambda message: self._log("warning", message),
 			)
 			self._paused = False
 			self._timer.start()
@@ -132,9 +136,12 @@ class CameraWorker(QObject):
 		self.state.current_raw_frame = None
 		self.state.current_gray_frame = None
 		self.state.current_detections = []
+		self.state.current_blue_detections = []
 		self.state.current_circles = []
 		if self.state.tracker is not None:
 			self.state.tracker.previous_gray = None
+		if self.state.blue_tracker is not None:
+			self.state.blue_tracker.previous_gray = None
 		self._emit_state()
 		self.camera_state_changed.emit(False, False)
 
@@ -157,13 +164,76 @@ class CameraWorker(QObject):
 				return
 			raw_frame = np.asanyarray(color_frame.get_data()).copy()
 			with self._captured_output():
-				display_frame = self.state.update_frame(raw_frame)
+				display_frame = self.state.update_frame(
+					raw_frame,
+					motor_telemetry=self._latest_motor_telemetry,
+				)
 			self.frame_ready.emit(display_frame.copy())
 			self._emit_state()
 		except Exception as exc:
 			self._paused = True
 			self._emit_error("Frame processing failed; processing was paused", exc)
 			self.camera_state_changed.emit(True, True)
+
+	@Slot(object)
+	def set_motor_telemetry(self, snapshot) -> None:
+		"""Keep a detached scalar snapshot outside ``ApplicationState`` ownership."""
+		if not isinstance(snapshot, dict):
+			self._latest_motor_telemetry = None
+			return
+		keys = (
+			"position_rad",
+			"velocity_rad_s",
+			"target_torque_Nm",
+			"measured_torque_Nm",
+			"temperature_C",
+			"state",
+			"feedback_monotonic",
+		)
+		self._latest_motor_telemetry = {
+			key: copy.deepcopy(snapshot.get(key)) for key in keys
+		}
+
+	@Slot(object)
+	def queue_experiment_batch(self, specification) -> None:
+		step_id = ""
+		try:
+			if not isinstance(specification, dict):
+				raise ValueError("Experiment batch specification must be a mapping")
+			step_id = str(specification.get("force_step_id", ""))
+			self.state.queue_dataset_batch(**copy.deepcopy(specification))
+			message = f"Queued experiment batch {step_id}."
+			self._log("success", message)
+			self.experiment_batch_queued.emit(step_id, True, message)
+		except Exception as exc:
+			message = str(exc)
+			self._emit_error("Experiment batch could not be queued", exc)
+			self.experiment_batch_queued.emit(step_id, False, message)
+		self._emit_state()
+
+	@Slot()
+	def abort_experiment_batch(self) -> None:
+		batch = self.state.abort_pending_dataset_batch()
+		if batch is not None:
+			self._log("warning", f"Aborted pending batch {batch.force_step_id}.")
+		self._emit_state()
+
+	@Slot(str, str)
+	def activate_force_model(self, model_path: str, metadata_path: str) -> None:
+		try:
+			model = self.state.activate_force_model(
+				model_path, metadata_path or None
+			)
+			message = (
+				f"Activated force model {model.metadata.model_name} "
+				f"version {model.metadata.model_version}."
+			)
+			self._log("success", message)
+			self.model_activation_completed.emit(model_path, True, message)
+		except Exception as exc:
+			self._emit_error("Force model activation failed; prior model retained", exc)
+			self.model_activation_completed.emit(model_path, False, str(exc))
+		self._emit_state()
 
 	@Slot(str)
 	def run_command(self, command_line: str) -> None:
@@ -186,20 +256,67 @@ class CameraWorker(QObject):
 				command_name = ""
 			if command_name == "save_config":
 				self.configuration_saved.emit(config_to_mapping(self.state.config))
+			if command_name == "calibration_start":
+				self.configuration_applied.emit(config_to_mapping(self.state.config))
 		self.command_completed.emit(line, success)
 
 	@Slot(int, int)
 	def handle_frame_click(self, x: int, y: int) -> None:
+		calibration_was_active = (
+			self.state.calibration_mode or self.state.blue_calibration_mode
+		)
 		try:
 			with self._captured_output():
 				handled = self.state.handle_mouse_click(
 					cv2.EVENT_LBUTTONDOWN, int(x), int(y)
 				)
-			if not handled:
+			if not handled and not self.state.last_click_rejection_reason:
 				self._log("warning", f"Frame click at ({x}, {y}) was not accepted.")
+			elif calibration_was_active:
+				self.configuration_applied.emit(config_to_mapping(self.state.config))
 		except Exception as exc:
 			self._emit_error("Frame click failed", exc)
 		self._emit_state()
+
+	@Slot(int, object)
+	def set_blob_area_limits(self, minimum: int, maximum) -> None:
+		"""Apply live blob-area limits from the GUI calibration sliders."""
+		try:
+			minimum_value = int(minimum)
+			maximum_value = None if maximum is None else int(maximum)
+			if minimum_value < 0:
+				raise ValueError("Minimum blob area cannot be negative")
+			if maximum_value is not None and maximum_value < minimum_value:
+				raise ValueError("Maximum blob area must be at least the minimum")
+			self.state.config.calibration.min_area = minimum_value
+			self.state.config.calibration.max_area = maximum_value
+			if self.state.config is not cfg:
+				cfg.calibration.min_area = minimum_value
+				cfg.calibration.max_area = maximum_value
+			self.configuration_applied.emit(config_to_mapping(self.state.config))
+			self._emit_state()
+		except Exception as exc:
+			self._emit_error("Blob-area update failed", exc)
+
+	@Slot(int, object)
+	def set_blue_blob_area_limits(self, minimum: int, maximum) -> None:
+		"""Apply live blue-target area limits from its dedicated GUI tab."""
+		try:
+			minimum_value = int(minimum)
+			maximum_value = None if maximum is None else int(maximum)
+			if minimum_value < 0:
+				raise ValueError("Minimum blue blob area cannot be negative")
+			if maximum_value is not None and maximum_value < minimum_value:
+				raise ValueError("Maximum blue blob area must be at least the minimum")
+			self.state.config.blue_calibration.min_area = minimum_value
+			self.state.config.blue_calibration.max_area = maximum_value
+			if self.state.config is not cfg:
+				cfg.blue_calibration.min_area = minimum_value
+				cfg.blue_calibration.max_area = maximum_value
+			self.configuration_applied.emit(config_to_mapping(self.state.config))
+			self._emit_state()
+		except Exception as exc:
+			self._emit_error("Blue blob-area update failed", exc)
 
 	@staticmethod
 	def _profile_contract(mapping: dict) -> tuple:
@@ -242,6 +359,8 @@ class CameraWorker(QObject):
 				update_config_in_place(cfg, candidate)
 			if self.state.tracker is not None:
 				self.state.tracker.config = self.state._tracking_config()
+			if self.state.blue_tracker is not None:
+				self.state.blue_tracker.config = self.state.config.blue_tracking
 			self.state.display_options = DisplayOptions.from_mapping(
 				self.state.config.display
 			)
@@ -282,14 +401,22 @@ class ApplicationController(QObject):
 	command_completed = Signal(str, bool)
 	configuration_applied = Signal(object)
 	configuration_saved = Signal(object)
+	experiment_batch_queued = Signal(str, bool, str)
+	model_activation_completed = Signal(str, bool, str)
 
 	_start_camera = Signal()
 	_stop_camera = Signal()
 	_pause_camera = Signal(bool)
 	_run_command = Signal(str)
 	_frame_click = Signal(int, int)
+	_blob_area_limits = Signal(int, object)
+	_blue_blob_area_limits = Signal(int, object)
+	_motor_telemetry = Signal(object)
 	_apply_configuration = Signal(object)
 	_reload_configuration = Signal()
+	_queue_experiment_batch = Signal(object)
+	_abort_experiment_batch = Signal()
+	_activate_force_model = Signal(str, str)
 	_initial_state = Signal()
 	_shutdown = Signal()
 
@@ -305,8 +432,16 @@ class ApplicationController(QObject):
 		self._pause_camera.connect(self._worker.set_paused)
 		self._run_command.connect(self._worker.run_command)
 		self._frame_click.connect(self._worker.handle_frame_click)
+		self._blob_area_limits.connect(self._worker.set_blob_area_limits)
+		self._blue_blob_area_limits.connect(
+			self._worker.set_blue_blob_area_limits
+		)
+		self._motor_telemetry.connect(self._worker.set_motor_telemetry)
 		self._apply_configuration.connect(self._worker.apply_configuration)
 		self._reload_configuration.connect(self._worker.reload_configuration)
+		self._queue_experiment_batch.connect(self._worker.queue_experiment_batch)
+		self._abort_experiment_batch.connect(self._worker.abort_experiment_batch)
+		self._activate_force_model.connect(self._worker.activate_force_model)
 		self._initial_state.connect(self._worker.emit_initial_state)
 		self._shutdown.connect(self._worker.shutdown)
 
@@ -317,6 +452,10 @@ class ApplicationController(QObject):
 		self._worker.command_completed.connect(self.command_completed)
 		self._worker.configuration_applied.connect(self.configuration_applied)
 		self._worker.configuration_saved.connect(self.configuration_saved)
+		self._worker.experiment_batch_queued.connect(self.experiment_batch_queued)
+		self._worker.model_activation_completed.connect(
+			self.model_activation_completed
+		)
 		self._thread.started.connect(self._initial_state)
 		self._thread.start()
 
@@ -335,11 +474,38 @@ class ApplicationController(QObject):
 	def click_frame(self, x: int, y: int) -> None:
 		self._frame_click.emit(x, y)
 
+	def set_blob_area_limits(self, minimum: int, maximum: int | None) -> None:
+		self._blob_area_limits.emit(int(minimum), maximum)
+
+	def set_blue_blob_area_limits(
+		self,
+		minimum: int,
+		maximum: int | None,
+	) -> None:
+		self._blue_blob_area_limits.emit(int(minimum), maximum)
+
+	@Slot(object)
+	def update_motor_telemetry(self, snapshot) -> None:
+		self._motor_telemetry.emit(copy.deepcopy(snapshot))
+
 	def apply_config(self, mapping: dict) -> None:
 		self._apply_configuration.emit(copy.deepcopy(mapping))
 
 	def reload_config(self) -> None:
 		self._reload_configuration.emit()
+
+	def queue_experiment_batch(self, specification: dict) -> None:
+		self._queue_experiment_batch.emit(copy.deepcopy(specification))
+
+	def abort_experiment_batch(self) -> None:
+		self._abort_experiment_batch.emit()
+
+	def activate_force_model(
+		self,
+		model_path: str,
+		metadata_path: str | None = None,
+	) -> None:
+		self._activate_force_model.emit(str(model_path), str(metadata_path or ""))
 
 	def shutdown(self, timeout_ms: int = 5000) -> bool:
 		if not self._thread.isRunning():

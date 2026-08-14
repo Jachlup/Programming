@@ -9,9 +9,12 @@ import json
 from pathlib import Path
 import pickle
 import sys
+import time
 
 import cv2
 import numpy as np
+import pytest
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -484,6 +487,142 @@ def test_dataset_validation_rejection_is_printed_and_shown_in_status(
 		text.startswith("DATA LAST: REJECTED")
 		for text, _ in state._status_lines()
 	)
+
+
+def test_dataset_coordinate_flags_and_manual_sample_interval_are_effective(
+	tmp_path: Path,
+) -> None:
+	config = _application_config(tmp_path)
+	config.dataset.update({
+		"save_raw_coordinates": False,
+		"save_compensated_coordinates": False,
+		"save_origin_relative_coordinates": False,
+		"sample_interval_ms": 10_000,
+	})
+	state = ApplicationState(config=config)
+	frame = np.zeros((200, 200, 3), dtype=np.uint8)
+	state.update_frame(frame, detections=_detections(), timestamp=1.0)
+	state.reference_start()
+	state.begin_reference_origin_selection()
+	assert state.handle_mouse_click(cv2.EVENT_LBUTTONDOWN, 140, 70)
+	state.reference_preview()
+	state.reference_accept()
+	state.update_frame(frame, detections=_detections(), timestamp=2.0)
+	state.start_dataset("coordinate-flags", 1.0)
+	state.queue_dataset_samples(2)
+	assert state.process_pending_dataset_sample() is True
+	assert state.process_pending_dataset_sample() is None
+	assert state.pending_dataset_frames == 1
+	row = next(csv.DictReader(state.dataset_session.root.joinpath("samples.csv").open()))
+	assert row["raw_origin_position"] == ""
+	assert row["raw_point_coordinates"] == ""
+	assert row["compensated_point_coordinates"] == ""
+	assert row["origin_relative_point_coordinates"] == ""
+	assert json.loads(row["feature_names"])
+	metadata = yaml.safe_load(
+		state.dataset_session.root.joinpath("metadata.yaml").read_text(encoding="utf-8")
+	)
+	assert metadata["save_raw_coordinates"] is False
+	assert metadata["save_compensated_coordinates"] is False
+	assert metadata["save_origin_relative_coordinates"] is False
+
+
+def _motor_snapshot(*, age_s: float = 0.0) -> dict:
+	return {
+		"position_rad": 1.25,
+		"velocity_rad_s": -0.05,
+		"target_torque_Nm": -2.0,
+		"measured_torque_Nm": -1.96,
+		"temperature_C": 31.5,
+		"state": "HOLDING_TORQUE",
+		"feedback_monotonic": time.monotonic() - age_s,
+	}
+
+
+def test_automated_dataset_batch_freezes_label_and_uses_nearest_red_point(
+	tmp_path: Path,
+) -> None:
+	state, frame = _accepted_application(tmp_path)
+	state.start_dataset("immutable-batch", 1.0)
+	blue = {"center": (88.0, 108.0), "detection_quality": 1.0}
+	state.blue_tracker.bind(state.current_gray_frame, blue)
+	batch = state.queue_dataset_batch(
+		count=1,
+		known_force_N=12.5,
+		force_step_id="loading-r02-s003",
+		loading_direction="loading",
+		repetition=2,
+		require_blue_target=True,
+		require_motor_telemetry=True,
+		maximum_motor_telemetry_age_s=0.5,
+	)
+	assert batch.selected_point_id == "LINE_A_02"
+	with pytest.raises(RuntimeError, match="pending"):
+		state.set_dataset_force(99.0)
+	# Even an unrelated direct change cannot relabel the already-frozen request.
+	state.known_reference_force = 99.0
+	state.update_frame(
+		frame,
+		detections=_detections(),
+		blue_detections=[blue],
+		timestamp=3.0,
+		motor_telemetry=_motor_snapshot(),
+	)
+	rows = list(csv.DictReader(state.dataset_session.root.joinpath("samples.csv").open()))
+	assert len(rows) == 1
+	assert rows[0]["known_force_N"] == "12.5"
+	assert rows[0]["force_step_id"] == "loading-r02-s003"
+	assert rows[0]["loading_direction"] == "loading"
+	assert rows[0]["repetition"] == "2"
+	assert rows[0]["selected_point_id"] == "LINE_A_02"
+	assert json.loads(rows[0]["blue_target_position"]) == [88.0, 108.0]
+	assert json.loads(rows[0]["selected_point_origin_relative_position"]) == [-50.0, 30.0]
+	assert rows[0]["motor_target_torque_Nm"] == "-2.0"
+	assert rows[0]["motor_state"] == "HOLDING_TORQUE"
+
+
+def test_stale_motor_telemetry_retries_and_abort_preserves_accepted_rows(
+	tmp_path: Path,
+) -> None:
+	state, frame = _accepted_application(tmp_path)
+	state.start_dataset("stale-and-abort", 2.0)
+	blue = {"center": (62.0, 110.0), "detection_quality": 1.0}
+	state.blue_tracker.bind(state.current_gray_frame, blue)
+	state.queue_dataset_batch(
+		count=2,
+		known_force_N=5.0,
+		force_step_id="loading-r01-s001",
+		loading_direction="loading",
+		repetition=1,
+		require_blue_target=True,
+		require_motor_telemetry=True,
+		maximum_motor_telemetry_age_s=0.05,
+	)
+	state.update_frame(
+		frame,
+		detections=_detections(),
+		blue_detections=[blue],
+		timestamp=3.0,
+		motor_telemetry=_motor_snapshot(age_s=1.0),
+	)
+	assert state.dataset_session.accepted == 0
+	assert state.pending_dataset_frames == 2
+	assert "stale" in state.last_dataset_result.lower()
+
+	state.update_frame(
+		frame,
+		detections=_detections(),
+		blue_detections=[blue],
+		timestamp=4.0,
+		motor_telemetry=_motor_snapshot(),
+	)
+	assert state.dataset_session.accepted == 1
+	assert state.pending_dataset_frames == 1
+	accepted_path = state.dataset_session.root / "samples.csv"
+	accepted_before = accepted_path.read_text(encoding="utf-8")
+	assert execute_command("dataset_abort", state)
+	assert state.pending_dataset_frames == 0
+	assert accepted_path.read_text(encoding="utf-8") == accepted_before
 
 
 def test_feature_order_and_model_metadata_are_exact() -> None:

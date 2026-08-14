@@ -64,5 +64,6 @@ set(CMAKE_DEPEND_INFO_FILES
   "CMakeFiles/logger.dir/DependInfo.cmake"
   "CMakeFiles/gripper_lib.dir/DependInfo.cmake"
   "CMakeFiles/gripper_control.dir/DependInfo.cmake"
+  "CMakeFiles/gripper_bridge.dir/DependInfo.cmake"
   "candlelib/CMakeFiles/candle.dir/DependInfo.cmake"
   )

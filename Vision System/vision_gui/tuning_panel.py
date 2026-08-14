@@ -110,11 +110,21 @@ class TuningPanel(QWidget):
 		badges.addWidget(QLabel("YAML"))
 		badges.addWidget(self.saved_badge)
 		badges.addStretch()
+		self.mask_only = QPushButton("Mask-only preview: OFF")
+		self.mask_only.setCheckable(True)
+		self.mask_only.toggled.connect(
+			lambda enabled: controller.execute(
+				f"show_mask_only {'on' if enabled else 'off'}"
+			)
+		)
+		badges.addWidget(self.mask_only)
 
 		form_root = QWidget()
 		form_layout = QVBoxLayout(form_root)
 		form_layout.addWidget(self._camera_group())
 		form_layout.addWidget(self._calibration_group())
+		form_layout.addWidget(self._blue_calibration_group())
+		form_layout.addWidget(self._blue_tracking_group())
 		form_layout.addWidget(self._circle_group())
 		form_layout.addWidget(self._ransac_group())
 		form_layout.addWidget(self._tracking_group())
@@ -155,7 +165,18 @@ class TuningPanel(QWidget):
 
 		controller.configuration_applied.connect(self.set_applied)
 		controller.configuration_saved.connect(self.set_saved)
+		controller.state_updated.connect(self.update_runtime_state)
 		self._refresh_status()
+
+	def update_runtime_state(self, state: dict) -> None:
+		enabled = bool(
+			state.get("display_options", {}).get("show_mask_only", False)
+		)
+		with QSignalBlocker(self.mask_only):
+			self.mask_only.setChecked(enabled)
+		self.mask_only.setText(
+			"Mask-only preview: ON" if enabled else "Mask-only preview: OFF"
+		)
 
 	def _group(self, title: str, rows: list[tuple[str, QWidget]]) -> QGroupBox:
 		form = QFormLayout()
@@ -250,9 +271,9 @@ class TuningPanel(QWidget):
 
 	def _calibration_group(self) -> QGroupBox:
 		return self._group("Blob and HSV calibration", [
-			("Minimum blob area", self._int("calibration.min_area", 1, 100000, " px²")),
+			("Minimum blob area", self._int("calibration.min_area", 0, 1000, " px²")),
 			("Maximum blob area", self._optional_int(
-				"calibration.max_area", 100000, "No maximum"
+				"calibration.max_area", 1000, "No maximum"
 			)),
 			("Lower area ratio", self._double("calibration.area_low_ratio", 0, 10, 3)),
 			("Upper area ratio", self._double("calibration.area_up_ratio", 0, 10, 3)),
@@ -276,6 +297,61 @@ class TuningPanel(QWidget):
 			("Maximum radius", self._int("hough_circles.max_radius", 0, 1000, " px")),
 			("Required for reference", self._bool("hough_circles.require_validation_for_reference")),
 			("Required for tracking", self._bool("hough_circles.require_validation_for_tracking")),
+		])
+
+	def _blue_calibration_group(self) -> QGroupBox:
+		return self._group("Blue blob calibration", [
+			("Minimum blob area", self._int(
+				"blue_calibration.min_area", 0, 5000, " px²"
+			)),
+			("Maximum blob area", self._optional_int(
+				"blue_calibration.max_area", 5000, "No maximum"
+			)),
+			("Lower area ratio", self._double(
+				"blue_calibration.area_low_ratio", 0, 10, 3
+			)),
+			("Upper area ratio", self._double(
+				"blue_calibration.area_up_ratio", 0, 10, 3
+			)),
+			("Hue margin", self._int("blue_calibration.hue_margin", 0, 180)),
+			("Saturation margin", self._int(
+				"blue_calibration.sat_margin", 0, 255
+			)),
+			("Value margin", self._int("blue_calibration.val_margin", 0, 255)),
+			("Blue range 1 lower", self._hsv(
+				"blue_calibration.blue_lower_1"
+			)),
+			("Blue range 1 upper", self._hsv(
+				"blue_calibration.blue_upper_1"
+			)),
+			("Blue range 2 lower", self._hsv(
+				"blue_calibration.blue_lower_2"
+			)),
+			("Blue range 2 upper", self._hsv(
+				"blue_calibration.blue_upper_2"
+			)),
+		])
+
+	def _blue_tracking_group(self) -> QGroupBox:
+		return self._group("Blue target tracking", [
+			("Maximum assignment distance", self._double(
+				"blue_tracking.maximum_assignment_distance_px", 0.1, 1000, 2, " px"
+			)),
+			("Maximum missing frames", self._int(
+				"blue_tracking.maximum_missing_frames", 0, 10000
+			)),
+			("Maximum optical-flow error", self._double(
+				"blue_tracking.maximum_optical_flow_error", 0.01, 10000, 2
+			)),
+			("Minimum tracking quality", self._double(
+				"blue_tracking.minimum_tracking_quality", 0, 1, 3
+			)),
+			("Allow tracked-only target", self._bool(
+				"blue_tracking.allow_tracked_only"
+			)),
+			("Optical-flow pyramid level", self._int(
+				"blue_tracking.maximum_pyramid_level", 0, 10
+			)),
 		])
 
 	def _ransac_group(self) -> QGroupBox:
@@ -336,9 +412,13 @@ class TuningPanel(QWidget):
 		return self._group("Dataset sampling", [
 			("Dataset directory", self._text("dataset.directory")),
 			("Default frames per sample", self._int("dataset.frames_per_sample", 1, 100000)),
+			("Manual sample interval", self._int("dataset.sample_interval_ms", 0, 600000, " ms")),
 			("Retry invalid frames", self._bool("dataset.retry_invalid_frames")),
 			("Maximum invalid retries", self._int("dataset.maximum_invalid_frame_retries", 1, 100000)),
 			("Save raw images", self._bool("dataset.save_images")),
+			("Save raw coordinates", self._bool("dataset.save_raw_coordinates")),
+			("Save compensated coordinates", self._bool("dataset.save_compensated_coordinates")),
+			("Save origin-relative coordinates", self._bool("dataset.save_origin_relative_coordinates")),
 		])
 
 	def _write_widgets(self, mapping: dict) -> None:

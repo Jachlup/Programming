@@ -72,6 +72,10 @@ add_executable(gripper_control
     main.cpp
 )
 
+add_executable(gripper_bridge
+    motor_bridge.cpp
+)
+
 target_link_libraries(gripper_control PRIVATE
     gripper_lib
     ${CANDLE_TARGET}
@@ -82,17 +86,29 @@ target_include_directories(gripper_control PRIVATE
     ${CANDLE_INCLUDE_DIRS}
 )
 
+target_link_libraries(gripper_bridge PRIVATE
+    gripper_lib
+    ${CANDLE_TARGET}
+)
+
+target_include_directories(gripper_bridge PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CANDLE_INCLUDE_DIRS}
+)
+
 # ============================================================================
 # Compiler Flags
 # ============================================================================
 
 if(UNIX)
     target_compile_options(gripper_control PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(gripper_bridge PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(gripper_lib PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 if(MSVC)
     target_compile_options(gripper_control PRIVATE /W4)
+    target_compile_options(gripper_bridge PRIVATE /W4)
     target_compile_options(gripper_lib PRIVATE /W4)
 endif()
 

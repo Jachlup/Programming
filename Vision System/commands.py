@@ -57,6 +57,105 @@ def _positive_count(value: str) -> int:
 	return count
 
 
+def calibration_start(args, state):
+	_no_args(args, "calibration_start")
+	state.start_calibration()
+	print(
+		"Calibration mode enabled. Click a detected red blob in the camera frame; "
+		"the nearest red contour pixel will set HSV and blob-area thresholds."
+	)
+
+
+def calibration_stop(args, state):
+	_no_args(args, "calibration_stop")
+	state.stop_calibration()
+	print("Calibration mode disabled.")
+
+
+def calibration_clear(args, state):
+	_no_args(args, "calibration_clear")
+	state.clear_calibration_selection()
+	print("Selected calibration blob cleared.")
+
+
+def calibration_status(args, state):
+	_no_args(args, "calibration_status")
+	blob = state.selected_calibration_blob
+	print(f"Calibration mode: {'ON' if state.calibration_mode else 'OFF'}")
+	print(
+		f"Area range: {state.config.calibration.min_area}.."
+		f"{state.config.calibration.max_area}"
+	)
+	if blob is None:
+		print("No calibration blob selected.")
+	else:
+		print(
+			f"Selected blob: area={float(blob.get('area', 0.0)):.1f}, "
+			f"sample_hsv={blob.get('sample_hsv')}"
+		)
+
+
+def blue_calibration_start(args, state):
+	_no_args(args, "blue_calibration_start")
+	state.start_blue_calibration()
+	print(
+		"Blue calibration enabled. Click the blue blob in the camera frame; "
+		"the click will calibrate it and bind BLUE_TARGET tracking."
+	)
+
+
+def blue_calibration_stop(args, state):
+	_no_args(args, "blue_calibration_stop")
+	state.stop_blue_calibration()
+	print("Blue calibration disabled; selected BLUE_TARGET tracking continues.")
+
+
+def blue_calibration_clear(args, state):
+	_no_args(args, "blue_calibration_clear")
+	state.clear_blue_target()
+	print("Blue calibration selection and BLUE_TARGET track cleared.")
+
+
+def _print_blue_status(state):
+	snapshot = state.status_snapshot()
+	print(f"Blue calibration mode: {'ON' if state.blue_calibration_mode else 'OFF'}")
+	print(
+		f"Blue area range: {state.config.blue_calibration.min_area}.."
+		f"{state.config.blue_calibration.max_area}"
+	)
+	print(
+		f"Blue tracking: {snapshot['blue_tracking_status']}, "
+		f"valid={snapshot['blue_tracking_valid']}, "
+		f"quality={snapshot['blue_tracking_quality']:.3f}"
+	)
+	if snapshot["blue_tracking_reason"]:
+		print(f"Blue tracking invalid because: {snapshot['blue_tracking_reason']}")
+	position = snapshot["blue_position"]
+	if position is not None:
+		print(f"Blue image position: ({position[0]:.2f}, {position[1]:.2f}) px")
+	relative = snapshot["blue_origin_relative_position"]
+	if relative is None:
+		print(
+			"Blue position from ORIGIN: unavailable — "
+			f"{snapshot['blue_relative_unavailable_reason']}"
+		)
+	else:
+		print(
+			f"Blue position from ORIGIN: dx={relative[0]:+.2f}px, "
+			f"dy={relative[1]:+.2f}px"
+		)
+
+
+def blue_calibration_status(args, state):
+	_no_args(args, "blue_calibration_status")
+	_print_blue_status(state)
+
+
+def blue_blob_status(args, state):
+	_no_args(args, "blue_blob_status")
+	_print_blue_status(state)
+
+
 def reference_start(args, state):
 	indices = _parse_rigid_indices(args)
 	state.reference_start(indices=indices)
@@ -231,6 +330,10 @@ def _show(option):
 		attr = f"show_{option}"
 		value = not getattr(state.display_options, attr) if not args else args[0] == "on"
 		setattr(state.display_options, attr, value)
+		if value and option == "mask_only":
+			state.display_options.show_blue_mask_only = False
+		elif value and option == "blue_mask_only":
+			state.display_options.show_mask_only = False
 		print(f"{attr}={value}")
 
 	return handler
@@ -271,6 +374,18 @@ def dataset_stop(args, state):
 		print(f"Dataset stopped: accepted={session.accepted}, rejected={session.rejected}")
 
 
+def dataset_abort(args, state):
+	_no_args(args, "dataset_abort")
+	batch = state.abort_pending_dataset_batch()
+	if batch is None:
+		print("No dataset batch is pending.")
+	else:
+		print(
+			f"Aborted pending dataset batch {batch.force_step_id}; "
+			f"accepted rows were not changed."
+		)
+
+
 def dataset_status(args, state):
 	_no_args(args, "dataset_status")
 	session = state.dataset_session
@@ -285,9 +400,17 @@ def dataset_status(args, state):
 
 
 def model_load(args, state):
-	if len(args) not in (1, 2):
-		raise ValueError("Usage: model_load MODEL.pkl [metadata.json]")
-	model = state.load_force_model(args[0], args[1] if len(args) == 2 else None)
+	if len(args) > 2:
+		raise ValueError("Usage: model_load [MODEL.pkl [metadata.json]]")
+	if args:
+		model_path = args[0]
+		metadata_path = args[1] if len(args) == 2 else None
+	else:
+		model_path = state.config.force_model.get("model_path")
+		metadata_path = state.config.force_model.get("metadata_path")
+		if not model_path:
+			raise RuntimeError("force_model.model_path is not configured")
+	model = state.load_force_model(model_path, metadata_path)
 	if model is None:
 		model = state.loaded_model
 	if model is None:
@@ -330,6 +453,38 @@ def help_command(args, state):
 
 
 COMMANDS = {
+	"calibration_start": Command(
+		"calibration_start", "Enable click-based HSV/blob calibration", calibration_start
+	),
+	"calibration_stop": Command(
+		"calibration_stop", "Disable click-based calibration", calibration_stop
+	),
+	"calibration_clear": Command(
+		"calibration_clear", "Clear the selected calibration blob", calibration_clear
+	),
+	"calibration_status": Command(
+		"calibration_status", "Show click-calibration status", calibration_status
+	),
+	"blue_calibration_start": Command(
+		"blue_calibration_start", "Enable blue calibration and target selection",
+		blue_calibration_start,
+	),
+	"blue_calibration_stop": Command(
+		"blue_calibration_stop", "Disable blue calibration; keep tracking",
+		blue_calibration_stop,
+	),
+	"blue_calibration_clear": Command(
+		"blue_calibration_clear", "Clear the selected blue target",
+		blue_calibration_clear,
+	),
+	"blue_calibration_status": Command(
+		"blue_calibration_status", "Show blue calibration and tracking status",
+		blue_calibration_status,
+	),
+	"blue_blob_status": Command(
+		"blue_blob_status", "Show blue position relative to ORIGIN",
+		blue_blob_status,
+	),
 	"reference_start": Command(
 		"reference_start", "Start setup [comma-separated D-label rigid indices]", reference_start
 	),
@@ -370,12 +525,17 @@ COMMANDS = {
 	"show_status": Command("show_status", "Toggle runtime status overlays [on|off]", _show("status")),
 	"show_warnings": Command("show_warnings", "Toggle warning overlays [on|off]", _show("warnings")),
 	"show_mask_only": Command("show_mask_only", "Toggle mask-only display [on|off]", _show("mask_only")),
+	"show_blue_mask_only": Command(
+		"show_blue_mask_only", "Toggle blue mask-only display [on|off]",
+		_show("blue_mask_only"),
+	),
 	"dataset_start": Command("dataset_start", "Start EXPERIMENT_ID KNOWN_FORCE_N", dataset_start),
 	"dataset_force": Command("dataset_force", "Set KNOWN_FORCE_N for later samples", dataset_force),
 	"dataset_sample": Command("dataset_sample", "Queue a sample batch [FRAME_COUNT]", dataset_sample),
+	"dataset_abort": Command("dataset_abort", "Abort the current pending batch", dataset_abort),
 	"dataset_stop": Command("dataset_stop", "Stop and report dataset session", dataset_stop),
 	"dataset_status": Command("dataset_status", "Show dataset status", dataset_status),
-	"model_load": Command("model_load", "Load MODEL.pkl [metadata.json]", model_load),
+	"model_load": Command("model_load", "Load [MODEL.pkl [metadata.json]]", model_load),
 	"model_info": Command("model_info", "Show model metadata", model_info),
 	"force_start": Command("force_start", "Begin validated inference", force_start),
 	"force_stop": Command("force_stop", "Stop inference", force_stop),

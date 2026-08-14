@@ -15,9 +15,39 @@ public:
     static constexpr int CAN_ID = 21;
     
     /**
-     * Attach the CANdle dongle and initialize the MD at CAN_ID.
+     * Attach the CANdle dongle and initialize one MD. The drive stays disabled
+     * unless enable_drive is explicitly requested.
      */
-    static void connect(mab::Candle*& candle, mab::MD*& md);
+    static void connect(
+        mab::Candle*& candle,
+        mab::MD*& md,
+        int can_id = CAN_ID,
+        bool clear_faults = false,
+        bool enable_drive = false
+    );
+
+    /** Release the MD and CANdle objects created by connect(). */
+    static void disconnect(mab::Candle*& candle, mab::MD*& md) noexcept;
+
+    static void enable(mab::MD* md);
+    static void disable(mab::MD* md);
+    static void clear_faults(mab::MD* md);
+    static void zero_position(mab::MD* md);
+    static void set_current_limit(mab::MD* md, double current_A);
+    static void set_maximum_torque(mab::MD* md, double torque_Nm);
+
+    /** Start a profiled position move without blocking for completion. */
+    static void start_profiled_position(
+        mab::MD* md,
+        double position,
+        double velocity,
+        double acceleration
+    );
+
+    static double read_position(mab::MD* md);
+    static double read_velocity(mab::MD* md);
+    static double read_torque(mab::MD* md);
+    static double read_temperature(mab::MD* md);
     
     /**
      * Push the jaw toward the hard stop under constant torque, detect the stall, 
@@ -47,8 +77,8 @@ public:
     static void open_gripper(
         mab::MD* md,
         double position = 2.0,
-        double velocity = 20.0,
-        double accel = 40.0
+        double velocity = 5.0,
+        double accel = 20.0
     );
     
     /**

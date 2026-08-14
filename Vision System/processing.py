@@ -1,4 +1,4 @@
-"""Image processing helpers for red blob detection and line fitting."""
+"""Image processing helpers for red/blue blob detection and line fitting."""
 
 from __future__ import annotations
 
@@ -55,6 +55,27 @@ class CalibrationConfig:
 
 
 @dataclass
+class BlueCalibrationConfig:
+	min_area: int
+	max_area: Optional[int]
+	area_low_ratio: float
+	area_up_ratio: float
+	hue_margin: int
+	sat_margin: int
+	val_margin: int
+	blue_lower_1: np.ndarray
+	blue_upper_1: np.ndarray
+	blue_lower_2: np.ndarray
+	blue_upper_2: np.ndarray
+
+	def __post_init__(self):
+		self.blue_lower_1 = np.array(self.blue_lower_1)
+		self.blue_upper_1 = np.array(self.blue_upper_1)
+		self.blue_lower_2 = np.array(self.blue_lower_2)
+		self.blue_upper_2 = np.array(self.blue_upper_2)
+
+
+@dataclass
 class CircleDetectionConfig:
 	dp: int
 	min_dist: int
@@ -73,12 +94,14 @@ class ForcePointConfig:
 @dataclass
 class AppConfig:
 	calibration: CalibrationConfig
+	blue_calibration: BlueCalibrationConfig
 	circles: CircleDetectionConfig
 	presets: dict
 	force_node: ForcePointConfig
 	camera: dict = field(default_factory=dict)
 	reference_ransac: dict = field(default_factory=dict)
 	tracking: dict = field(default_factory=dict)
+	blue_tracking: dict = field(default_factory=dict)
 	reference: dict = field(default_factory=dict)
 	geometry: dict = field(default_factory=dict)
 	dataset: dict = field(default_factory=dict)
@@ -88,6 +111,33 @@ class AppConfig:
 	def active_preset(self) -> HsvPreset:
 		"""Return the currently selected HsvPreset."""
 		return self.presets[self.calibration.preset]
+
+
+DEFAULT_BLUE_CALIBRATION: dict[str, Any] = {
+	"min_area": 50,
+	"max_area": 5_000,
+	"area_low_ratio": 0.6,
+	"area_up_ratio": 0.3,
+	"hue_margin": 10,
+	"sat_margin": 60,
+	"val_margin": 60,
+	"blue_lower_1": [90, 40, 30],
+	"blue_upper_1": [140, 255, 255],
+	"blue_lower_2": [0, 0, 0],
+	"blue_upper_2": [0, 0, 0],
+}
+
+DEFAULT_BLUE_TRACKING: dict[str, Any] = {
+	"maximum_assignment_distance_px": 40.0,
+	"maximum_missing_frames": 5,
+	"maximum_optical_flow_error": 25.0,
+	"maximum_pyramid_level": 3,
+	"minimum_tracking_quality": 0.2,
+	"allow_tracked_only": True,
+	"termination_count": 20,
+	"termination_epsilon": 0.03,
+	"window_size": [21, 21],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -107,9 +157,14 @@ def config_from_mapping(raw: dict[str, Any]) -> AppConfig:
 
 	# Handle missing key seamlessly for backwards-compatibility
 	force_raw = raw.get("force_node", {"node_number": 1, "force_magnitude": 0.0})
+	blue_calibration_raw = {
+		**DEFAULT_BLUE_CALIBRATION,
+		**raw.get("blue_calibration", {}),
+	}
 
 	result = AppConfig(
 		calibration=CalibrationConfig(**raw["calibration"]),
+		blue_calibration=BlueCalibrationConfig(**blue_calibration_raw),
 		circles=CircleDetectionConfig(**raw["hough_circles"]),
 		presets={name: HsvPreset(**values) for name, values in raw["presets"].items()},
 		force_node=ForcePointConfig(**force_raw),
@@ -122,6 +177,7 @@ def config_from_mapping(raw: dict[str, Any]) -> AppConfig:
 		force_model=raw.get("force_model", {}),
 		display=raw.get("display", {}),
 		training=raw.get("training", {}),
+		blue_tracking={**DEFAULT_BLUE_TRACKING, **raw.get("blue_tracking", {})},
 	)
 	validate_config(result)
 	return result
@@ -139,6 +195,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
 def config_to_mapping(config: AppConfig) -> dict[str, Any]:
 	"""Return a detached, YAML-safe representation of an ``AppConfig``."""
 	cal = config.calibration
+	blue = config.blue_calibration
 	data: dict[str, Any] = {
 		"calibration": {
 			"min_area":       cal.min_area,
@@ -154,6 +211,19 @@ def config_to_mapping(config: AppConfig) -> dict[str, Any]:
 			"red_lower_2":    cal.red_lower_2.tolist(),
 			"red_upper_2":    cal.red_upper_2.tolist(),
 		},
+		"blue_calibration": {
+			"min_area":       blue.min_area,
+			"max_area":       blue.max_area,
+			"area_low_ratio": blue.area_low_ratio,
+			"area_up_ratio":  blue.area_up_ratio,
+			"hue_margin":     blue.hue_margin,
+			"sat_margin":     blue.sat_margin,
+			"val_margin":     blue.val_margin,
+			"blue_lower_1":   blue.blue_lower_1.tolist(),
+			"blue_upper_1":   blue.blue_upper_1.tolist(),
+			"blue_lower_2":   blue.blue_lower_2.tolist(),
+			"blue_upper_2":   blue.blue_upper_2.tolist(),
+		},
 		"hough_circles": asdict(config.circles),
 		"presets": {
 			name: {
@@ -166,7 +236,7 @@ def config_to_mapping(config: AppConfig) -> dict[str, Any]:
 		},
 		"force_node": asdict(config.force_node),
 	}
-	for section in ("camera", "reference_ransac", "tracking", "reference",
+	for section in ("camera", "reference_ransac", "tracking", "blue_tracking", "reference",
 					"geometry", "dataset", "force_model", "display", "training"):
 		data[section] = copy.deepcopy(getattr(config, section))
 	return data
@@ -175,8 +245,8 @@ def config_to_mapping(config: AppConfig) -> dict[str, Any]:
 def validate_config(config: AppConfig) -> None:
 	"""Validate cross-field constraints used by the live vision pipeline."""
 	cal = config.calibration
-	if int(cal.min_area) < 1:
-		raise ValueError("calibration.min_area must be positive")
+	if int(cal.min_area) < 0:
+		raise ValueError("calibration.min_area must be non-negative")
 	if cal.max_area is not None and int(cal.max_area) < int(cal.min_area):
 		raise ValueError("calibration.max_area must be at least min_area")
 	for name in ("area_low_ratio", "area_up_ratio"):
@@ -194,6 +264,48 @@ def validate_config(config: AppConfig) -> None:
 			raise ValueError(f"calibration.{name} must contain three values")
 		if not (0 <= int(values[0]) <= 180 and np.all((values[1:] >= 0) & (values[1:] <= 255))):
 			raise ValueError(f"calibration.{name} contains an invalid HSV value")
+
+	blue = config.blue_calibration
+	if int(blue.min_area) < 0:
+		raise ValueError("blue_calibration.min_area must be non-negative")
+	if blue.max_area is not None and int(blue.max_area) < int(blue.min_area):
+		raise ValueError("blue_calibration.max_area must be at least min_area")
+	for name in ("area_low_ratio", "area_up_ratio"):
+		if float(getattr(blue, name)) < 0.0:
+			raise ValueError(f"blue_calibration.{name} must be non-negative")
+	for name, maximum in (("hue_margin", 180), ("sat_margin", 255), ("val_margin", 255)):
+		value = int(getattr(blue, name))
+		if value < 0 or value > maximum:
+			raise ValueError(f"blue_calibration.{name} must be in 0..{maximum}")
+	for name in ("blue_lower_1", "blue_upper_1", "blue_lower_2", "blue_upper_2"):
+		values = np.asarray(getattr(blue, name))
+		if values.shape != (3,):
+			raise ValueError(f"blue_calibration.{name} must contain three values")
+		if not (0 <= int(values[0]) <= 180 and np.all((values[1:] >= 0) & (values[1:] <= 255))):
+			raise ValueError(f"blue_calibration.{name} contains an invalid HSV value")
+
+	blue_tracking = config.blue_tracking
+	for name in (
+		"maximum_assignment_distance_px", "maximum_optical_flow_error",
+		"termination_epsilon",
+	):
+		if float(blue_tracking.get(name, 0.0)) <= 0.0:
+			raise ValueError(f"blue_tracking.{name} must be positive")
+	for name in ("maximum_missing_frames", "maximum_pyramid_level"):
+		if int(blue_tracking.get(name, -1)) < 0:
+			raise ValueError(f"blue_tracking.{name} must be non-negative")
+	if int(blue_tracking.get("termination_count", 0)) < 1:
+		raise ValueError("blue_tracking.termination_count must be positive")
+	minimum_blue_quality = float(blue_tracking.get("minimum_tracking_quality", 0.0))
+	if minimum_blue_quality < 0.0 or minimum_blue_quality > 1.0:
+		raise ValueError("blue_tracking.minimum_tracking_quality must be in 0..1")
+	window_size = blue_tracking.get("window_size", [])
+	if (
+		not isinstance(window_size, (list, tuple))
+		or len(window_size) != 2
+		or any(int(value) < 1 for value in window_size)
+	):
+		raise ValueError("blue_tracking.window_size must contain two positive values")
 
 	circles = config.circles
 	for name in ("dp", "min_dist", "param1", "param2"):
@@ -243,18 +355,87 @@ def validate_config(config: AppConfig) -> None:
 		raise ValueError("geometry.geometry_reference_mode is invalid")
 	if int(config.dataset.get("frames_per_sample", 1)) < 1:
 		raise ValueError("dataset.frames_per_sample must be positive")
+	if int(config.dataset.get("sample_interval_ms", 0)) < 0:
+		raise ValueError("dataset.sample_interval_ms must be non-negative")
 	if int(config.dataset.get("maximum_invalid_frame_retries", 1)) < 1:
 		raise ValueError("dataset.maximum_invalid_frame_retries must be positive")
+	for name in (
+		"save_images",
+		"save_raw_coordinates",
+		"save_compensated_coordinates",
+		"save_origin_relative_coordinates",
+		"save_feature_names",
+	):
+		if name in config.dataset and not isinstance(config.dataset[name], bool):
+			raise ValueError(f"dataset.{name} must be true or false")
+	if not bool(config.dataset.get("save_feature_names", True)):
+		raise ValueError(
+			"dataset.save_feature_names must remain true because it is part of the "
+			"training compatibility contract"
+		)
+
+	connections = config.geometry.get("structural_connections", [])
+	if not isinstance(connections, list):
+		raise ValueError("geometry.structural_connections must be a list")
+	seen_connections: set[tuple[str, str]] = set()
+	for connection in connections:
+		if (
+			not isinstance(connection, (list, tuple))
+			or len(connection) != 2
+			or not all(isinstance(value, str) and value for value in connection)
+		):
+			raise ValueError(
+				"Each structural connection must contain two non-empty point IDs"
+			)
+		pair = tuple(connection)
+		if pair[0] == pair[1] or pair in seen_connections or pair[::-1] in seen_connections:
+			raise ValueError("Structural connections must be unique and join two points")
+		seen_connections.add(pair)
+
+	force_model = config.force_model
+	for name in ("model_path", "metadata_path", "model_type"):
+		if force_model.get(name) is not None and not isinstance(force_model[name], str):
+			raise ValueError(f"force_model.{name} must be text or null")
+	minimum_force = float(force_model.get("minimum_calibrated_force_N", 5.0))
+	maximum_force = float(force_model.get("maximum_calibrated_force_N", 40.0))
+	if (
+		not np.isfinite(minimum_force)
+		or not np.isfinite(maximum_force)
+		or minimum_force > maximum_force
+	):
+		raise ValueError("force_model calibrated range is invalid")
+
+
+def configuration_compatibility_notes(config: AppConfig) -> list[str]:
+	"""Explain retained legacy keys that intentionally do not drive runtime data."""
+	notes: list[str] = []
+	if "minimum_valid_points" in config.tracking:
+		notes.append(
+			"tracking.minimum_valid_points is compatibility-only: permanent required "
+			"point IDs and geometry validity determine recordability."
+		)
+	if any(
+		name in config.force_model
+		for name in (
+			"minimum_calibrated_force_N", "maximum_calibrated_force_N", "model_type"
+		)
+	):
+		notes.append(
+			"force_model calibrated bounds and model_type are compatibility-only; "
+			"validated model metadata is authoritative."
+		)
+	return notes
 
 
 def update_config_in_place(target: AppConfig, source: AppConfig) -> None:
 	"""Copy configuration values while preserving the shared object identity."""
 	validate_config(source)
 	target.calibration = copy.deepcopy(source.calibration)
+	target.blue_calibration = copy.deepcopy(source.blue_calibration)
 	target.circles = copy.deepcopy(source.circles)
 	target.presets = copy.deepcopy(source.presets)
 	target.force_node = copy.deepcopy(source.force_node)
-	for section in ("camera", "reference_ransac", "tracking", "reference",
+	for section in ("camera", "reference_ransac", "tracking", "blue_tracking", "reference",
 					"geometry", "dataset", "force_model", "display", "training"):
 		setattr(target, section, copy.deepcopy(getattr(source, section)))
 
@@ -315,18 +496,19 @@ def _build_hue_range(hue, hue_margin):
 	return (lower, upper), (lower, upper)
 
 
-def apply_calibration_preset() -> dict:
+def apply_calibration_preset(config: AppConfig | None = None) -> dict:
 	"""Copy the active preset's HSV ranges into calibration and return them."""
-	preset = cfg.active_preset()
-	cfg.calibration.red_lower_1 = preset.red_lower_1.copy()
-	cfg.calibration.red_upper_1 = preset.red_upper_1.copy()
-	cfg.calibration.red_lower_2 = preset.red_lower_2.copy()
-	cfg.calibration.red_upper_2 = preset.red_upper_2.copy()
+	target = cfg if config is None else config
+	preset = target.active_preset()
+	target.calibration.red_lower_1 = preset.red_lower_1.copy()
+	target.calibration.red_upper_1 = preset.red_upper_1.copy()
+	target.calibration.red_lower_2 = preset.red_lower_2.copy()
+	target.calibration.red_upper_2 = preset.red_upper_2.copy()
 	return {
-		"lower_red1": cfg.calibration.red_lower_1.copy(),
-		"upper_red1": cfg.calibration.red_upper_1.copy(),
-		"lower_red2": cfg.calibration.red_lower_2.copy(),
-		"upper_red2": cfg.calibration.red_upper_2.copy(),
+		"lower_red1": target.calibration.red_lower_1.copy(),
+		"upper_red1": target.calibration.red_upper_1.copy(),
+		"lower_red2": target.calibration.red_lower_2.copy(),
+		"upper_red2": target.calibration.red_upper_2.copy(),
 	}
 
 
@@ -399,6 +581,63 @@ def create_red_mask(
 	return mask
 
 
+def create_blue_mask(
+	frame,
+	lower_blue1=None,
+	upper_blue1=None,
+	lower_blue2=None,
+	upper_blue2=None,
+	config: AppConfig | None = None,
+):
+	"""Create a binary mask for blue pixels in a BGR frame."""
+	target = cfg if config is None else config
+	blue = target.blue_calibration
+	hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+	lower_blue1 = np.asarray(_resolve_threshold(lower_blue1, blue.blue_lower_1))
+	upper_blue1 = np.asarray(_resolve_threshold(upper_blue1, blue.blue_upper_1))
+	lower_blue2 = np.asarray(_resolve_threshold(lower_blue2, blue.blue_lower_2))
+	upper_blue2 = np.asarray(_resolve_threshold(upper_blue2, blue.blue_upper_2))
+	masks = [cv2.inRange(hsv, lower_blue1, upper_blue1)]
+	if not (np.all(lower_blue2 == 0) and np.all(upper_blue2 == 0)):
+		masks.append(cv2.inRange(hsv, lower_blue2, upper_blue2))
+	mask = masks[0]
+	for extra_mask in masks[1:]:
+		mask = cv2.bitwise_or(mask, extra_mask)
+	return mask
+
+
+def sample_blue_blob_hsv_near_point(
+	frame,
+	blob,
+	point,
+	config: AppConfig | None = None,
+):
+	"""Sample the nearest masked blue pixel inside the selected contour."""
+	if frame is None or blob is None:
+		return None
+	height, width = frame.shape[:2]
+	x, y = point
+	if x < 0 or y < 0 or x >= width or y >= height:
+		return None
+	blue_mask = create_blue_mask(frame, config=config)
+	contour_mask = np.zeros((height, width), dtype=np.uint8)
+	cv2.drawContours(contour_mask, [blob["contour"]], -1, 255, thickness=cv2.FILLED)
+	candidate_mask = cv2.bitwise_and(blue_mask, contour_mask)
+	candidate_y, candidate_x = np.nonzero(candidate_mask)
+	if candidate_x.size == 0:
+		return None
+	distances = (
+		(candidate_x.astype(np.int64) - x) ** 2
+		+ (candidate_y.astype(np.int64) - y) ** 2
+	)
+	nearest = int(np.argmin(distances))
+	hsv_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+	return tuple(
+		int(value)
+		for value in hsv_frame[candidate_y[nearest], candidate_x[nearest]]
+	)
+
+
 def calibrate_from_blob(
 	blob,
 	area_low_ratio=None,
@@ -406,17 +645,19 @@ def calibrate_from_blob(
 	hue_margin=None,
 	sat_margin=None,
 	val_margin=None,
+	config: AppConfig | None = None,
 ):
 	"""Update the live calibration thresholds from a selected blob."""
-	area_low_ratio = cfg.calibration.area_low_ratio if area_low_ratio is None else area_low_ratio
-	area_up_ratio  = cfg.calibration.area_up_ratio if area_up_ratio is None else area_up_ratio
-	hue_margin     = cfg.calibration.hue_margin if hue_margin is None else hue_margin
-	sat_margin     = cfg.calibration.sat_margin if sat_margin is None else sat_margin
-	val_margin     = cfg.calibration.val_margin if val_margin is None else val_margin
+	target = cfg if config is None else config
+	area_low_ratio = target.calibration.area_low_ratio if area_low_ratio is None else area_low_ratio
+	area_up_ratio  = target.calibration.area_up_ratio if area_up_ratio is None else area_up_ratio
+	hue_margin     = target.calibration.hue_margin if hue_margin is None else hue_margin
+	sat_margin     = target.calibration.sat_margin if sat_margin is None else sat_margin
+	val_margin     = target.calibration.val_margin if val_margin is None else val_margin
 
 	area = float(blob["area"])
-	cfg.calibration.min_area = max(1, int(area * (1.0 - area_low_ratio)))
-	cfg.calibration.max_area = max(cfg.calibration.min_area, int(area * (1.0 + area_up_ratio)))
+	target.calibration.min_area = max(1, int(area * (1.0 - area_low_ratio)))
+	target.calibration.max_area = max(target.calibration.min_area, int(area * (1.0 + area_up_ratio)))
 
 	sample_hsv = blob.get("sample_hsv")
 
@@ -427,21 +668,75 @@ def calibrate_from_blob(
 	cal_v_low = max(0, val - val_margin)
 	cal_v_high = min(255, val + val_margin)
 
-	cfg.calibration.red_lower_1 = np.array([int(s1), cal_s_low, cal_v_low])
-	cfg.calibration.red_upper_1 = np.array([int(s2), cal_s_high, cal_v_high])
+	target.calibration.red_lower_1 = np.array([int(s1), cal_s_low, cal_v_low])
+	target.calibration.red_upper_1 = np.array([int(s2), cal_s_high, cal_v_high])
 
 	low_h, high_h = secondary_hue_range
-	cfg.calibration.red_lower_2 = np.array([int(low_h), cal_s_low, cal_v_low])
-	cfg.calibration.red_upper_2 = np.array([int(high_h), cal_s_high, cal_v_high])
+	target.calibration.red_lower_2 = np.array([int(low_h), cal_s_low, cal_v_low])
+	target.calibration.red_upper_2 = np.array([int(high_h), cal_s_high, cal_v_high])
 
 	return {
-		"area_min":   cfg.calibration.min_area,
-		"area_max":   cfg.calibration.max_area,
+		"area_min":   target.calibration.min_area,
+		"area_max":   target.calibration.max_area,
 		"sample_hsv": tuple(int(value) for value in sample_hsv),
-		"lower_red1": cfg.calibration.red_lower_1.copy(),
-		"upper_red1": cfg.calibration.red_upper_1.copy(),
-		"lower_red2": cfg.calibration.red_lower_2.copy(),
-		"upper_red2": cfg.calibration.red_upper_2.copy(),
+		"lower_red1": target.calibration.red_lower_1.copy(),
+		"upper_red1": target.calibration.red_upper_1.copy(),
+		"lower_red2": target.calibration.red_lower_2.copy(),
+		"upper_red2": target.calibration.red_upper_2.copy(),
+	}
+
+
+def calibrate_blue_from_blob(
+	blob,
+	area_low_ratio=None,
+	area_up_ratio=None,
+	hue_margin=None,
+	sat_margin=None,
+	val_margin=None,
+	config: AppConfig | None = None,
+):
+	"""Update independent blue HSV and area thresholds from a selected blob."""
+	target = cfg if config is None else config
+	blue = target.blue_calibration
+	area_low_ratio = blue.area_low_ratio if area_low_ratio is None else area_low_ratio
+	area_up_ratio = blue.area_up_ratio if area_up_ratio is None else area_up_ratio
+	hue_margin = blue.hue_margin if hue_margin is None else hue_margin
+	sat_margin = blue.sat_margin if sat_margin is None else sat_margin
+	val_margin = blue.val_margin if val_margin is None else val_margin
+
+	area = float(blob["area"])
+	blue.min_area = max(1, int(area * (1.0 - area_low_ratio)))
+	blue.max_area = max(blue.min_area, int(area * (1.0 + area_up_ratio)))
+	sample_hsv = blob.get("sample_hsv")
+	if sample_hsv is None:
+		raise ValueError("The selected blue blob has no HSV sample")
+	hue, sat, val = (int(value) for value in sample_hsv)
+	(primary_low, primary_high), secondary = _build_hue_range(hue, hue_margin)
+	saturation_low = max(0, sat - sat_margin)
+	saturation_high = min(255, sat + sat_margin)
+	value_low = max(0, val - val_margin)
+	value_high = min(255, val + val_margin)
+	blue.blue_lower_1 = np.array(
+		[int(primary_low), saturation_low, value_low]
+	)
+	blue.blue_upper_1 = np.array(
+		[int(primary_high), saturation_high, value_high]
+	)
+	secondary_low, secondary_high = secondary
+	blue.blue_lower_2 = np.array(
+		[int(secondary_low), saturation_low, value_low]
+	)
+	blue.blue_upper_2 = np.array(
+		[int(secondary_high), saturation_high, value_high]
+	)
+	return {
+		"area_min": blue.min_area,
+		"area_max": blue.max_area,
+		"sample_hsv": tuple(int(value) for value in sample_hsv),
+		"lower_blue1": blue.blue_lower_1.copy(),
+		"upper_blue1": blue.blue_upper_1.copy(),
+		"lower_blue2": blue.blue_lower_2.copy(),
+		"upper_blue2": blue.blue_upper_2.copy(),
 	}
 
 
@@ -490,6 +785,59 @@ def find_red_blob_data(frame, min_area: int = None, max_area: int = None):
 			}
 		)
 
+	return blobs
+
+
+def find_blue_blob_data(
+	frame,
+	min_area: int | None = None,
+	max_area: int | None = None,
+	config: AppConfig | None = None,
+):
+	"""Return metadata for blue candidates; target selection happens separately."""
+	target = cfg if config is None else config
+	blue = target.blue_calibration
+	min_area = _resolve_threshold(min_area, blue.min_area)
+	max_area = _resolve_threshold(max_area, blue.max_area)
+	hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+	mask = create_blue_mask(frame, config=target)
+	contours, _ = cv2.findContours(
+		mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+	)
+	blobs = []
+	for contour in contours:
+		area = float(cv2.contourArea(contour))
+		if area < min_area or (max_area is not None and area > max_area):
+			continue
+		moments = cv2.moments(contour)
+		if moments["m00"] == 0:
+			continue
+		cx = float(moments["m10"] / moments["m00"])
+		cy = float(moments["m01"] / moments["m00"])
+		x, y, width, height = cv2.boundingRect(contour)
+		contour_mask = np.zeros(mask.shape, dtype=np.uint8)
+		cv2.drawContours(
+			contour_mask, [contour], -1, 255, thickness=cv2.FILLED
+		)
+		mean_hsv = cv2.mean(hsv, mask=contour_mask)
+		center_hsv = tuple(
+			int(value) for value in hsv[int(round(cy)), int(round(cx))]
+		)
+		perimeter = float(cv2.arcLength(contour, True))
+		circularity = (
+			0.0 if perimeter <= 0
+			else float(4.0 * np.pi * area / (perimeter * perimeter))
+		)
+		blobs.append({
+			"center": (cx, cy),
+			"area": area,
+			"bbox": (x, y, width, height),
+			"bounding_box": (x, y, width, height),
+			"contour": contour,
+			"center_hsv": center_hsv,
+			"mean_hsv": tuple(float(value) for value in mean_hsv[:3]),
+			"detection_quality": float(np.clip(circularity, 0.0, 1.0)),
+		})
 	return blobs
 
 #make switches

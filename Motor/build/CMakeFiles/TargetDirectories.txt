@@ -1,6 +1,7 @@
 /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles/logger.dir
 /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles/gripper_lib.dir
 /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles/gripper_control.dir
+/home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles/gripper_bridge.dir
 /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles/edit_cache.dir
 /home/janek/Desktop/Programming/Programming/Motor/build/CMakeFiles/rebuild_cache.dir
 /home/janek/Desktop/Programming/Programming/Motor/build/shared_data/CMakeFiles/edit_cache.dir

@@ -1,0 +1,5 @@
+# MAB Robotics USB-to-CAN application firmware.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0069", ATTRS{idProduct}=="1000", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+
+# MAB Robotics USB-to-CAN bootloader firmware.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0069", ATTRS{idProduct}=="2000", GROUP="plugdev", MODE="0660", TAG+="uaccess"

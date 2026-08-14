@@ -122,6 +122,8 @@ def on_mouse_click(
 
 def _clear_active_selection(state: ApplicationState) -> None:
 	state.selected_calibration_blob = None
+	if state.blue_calibration_mode:
+		state.clear_blue_target()
 	state.measure_points = []
 	state.cancel_origin_reacquisition()
 	if state.reference_origin_selection_mode or state.selected_origin_detection_index is not None:
@@ -184,6 +186,7 @@ def main() -> None:
 					state.measure_mode
 					or state.reference_origin_selection_mode
 					or state.origin_reacquisition_selection_mode
+					or state.blue_calibration_mode
 				):
 					print("Calibration was not enabled because another mouse mode is active.")
 				else:
@@ -196,6 +199,7 @@ def main() -> None:
 			elif key == ord("i"):
 				if (
 					state.calibration_mode
+					or state.blue_calibration_mode
 					or state.reference_origin_selection_mode
 					or state.origin_reacquisition_selection_mode
 				):

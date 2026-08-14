@@ -156,6 +156,19 @@ gripper_control/fast:
 .PHONY : gripper_control/fast
 
 #=============================================================================
+# Target rules for targets named gripper_bridge
+
+# Build rule for target.
+gripper_bridge: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 gripper_bridge
+.PHONY : gripper_bridge
+
+# fast build rule for target.
+gripper_bridge/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/build
+.PHONY : gripper_bridge/fast
+
+#=============================================================================
 # Target rules for targets named candle
 
 # Build rule for target.
@@ -240,6 +253,30 @@ main.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_control.dir/build.make CMakeFiles/gripper_control.dir/main.cpp.s
 .PHONY : main.cpp.s
 
+motor_bridge.o: motor_bridge.cpp.o
+.PHONY : motor_bridge.o
+
+# target to build an object file
+motor_bridge.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/motor_bridge.cpp.o
+.PHONY : motor_bridge.cpp.o
+
+motor_bridge.i: motor_bridge.cpp.i
+.PHONY : motor_bridge.i
+
+# target to preprocess a source file
+motor_bridge.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/motor_bridge.cpp.i
+.PHONY : motor_bridge.cpp.i
+
+motor_bridge.s: motor_bridge.cpp.s
+.PHONY : motor_bridge.s
+
+# target to generate assembly for a file
+motor_bridge.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/gripper_bridge.dir/build.make CMakeFiles/gripper_bridge.dir/motor_bridge.cpp.s
+.PHONY : motor_bridge.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -249,6 +286,7 @@ help:
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
 	@echo "... candle"
+	@echo "... gripper_bridge"
 	@echo "... gripper_control"
 	@echo "... gripper_lib"
 	@echo "... logger"
@@ -261,6 +299,9 @@ help:
 	@echo "... main.o"
 	@echo "... main.i"
 	@echo "... main.s"
+	@echo "... motor_bridge.o"
+	@echo "... motor_bridge.i"
+	@echo "... motor_bridge.s"
 .PHONY : help
 
 

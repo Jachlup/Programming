@@ -11,6 +11,28 @@ calibration:
   red_upper_2: [180, 255, 122]
   sat_margin: 60
   val_margin: 60
+blue_calibration:
+  area_low_ratio: 0.6
+  area_up_ratio: 0.3
+  hue_margin: 10
+  max_area: 5000
+  min_area: 50
+  blue_lower_1: [90, 40, 30]
+  blue_lower_2: [0, 0, 0]
+  blue_upper_1: [140, 255, 255]
+  blue_upper_2: [0, 0, 0]
+  sat_margin: 60
+  val_margin: 60
+blue_tracking:
+  allow_tracked_only: true
+  maximum_assignment_distance_px: 40.0
+  maximum_missing_frames: 5
+  maximum_optical_flow_error: 25.0
+  maximum_pyramid_level: 3
+  minimum_tracking_quality: 0.2
+  termination_count: 20
+  termination_epsilon: 0.03
+  window_size: [21, 21]
 camera:
   auto_exposure: true
   exposure: null
@@ -21,6 +43,7 @@ camera:
 dataset:
   directory: datasets
   frames_per_sample: 1
+  sample_interval_ms: 0
   maximum_invalid_frame_retries: 120
   retry_invalid_frames: true
   save_compensated_coordinates: true
@@ -29,6 +52,7 @@ dataset:
   save_origin_relative_coordinates: true
   save_raw_coordinates: true
 display:
+  show_blue_mask_only: false
   show_circles: true
   show_features: false
   show_geometry: false

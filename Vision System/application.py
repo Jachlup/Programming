@@ -2,29 +2,36 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
+import sys
 import time
 from typing import Any
 
 import cv2
 import numpy as np
 
+from blue_tracking import BlueBlobTracker, BlueTrackStatus
 from dataset import DatasetSession
 from force_model import ForceModel, ForcePrediction
 from geometry import GeometryResult, extract_geometry
 from processing import (
 	AppConfig,
+	apply_calibration_preset,
+	calibrate_blue_from_blob,
 	calibrate_from_blob,
 	cfg,
+	configuration_compatibility_notes,
+	create_blue_mask,
 	create_red_mask,
 	detect_circles,
-	draw_blob_calibration_info,
 	draw_circles,
 	draw_measurement,
 	find_blob_index_for_click,
+	find_blue_blob_data,
 	find_red_blob_data,
+	sample_blue_blob_hsv_near_point,
 	sample_blob_hsv_near_point,
 	sync_area_tuning_window_from_config,
 )
@@ -59,6 +66,24 @@ class ReferenceSetupMode(str, Enum):
 	PROPOSAL_READY = "PROPOSAL_READY"
 
 
+@dataclass(frozen=True)
+class DatasetBatch:
+	"""A label and acquisition request frozen at the instant it is queued."""
+
+	known_force_N: float
+	force_step_id: str
+	loading_direction: str
+	repetition: int
+	requested_samples: int
+	remaining_samples: int
+	selected_point_id: str = ""
+	require_blue_target: bool = False
+	require_motor_telemetry: bool = False
+	maximum_motor_telemetry_age_s: float | None = None
+	sample_interval_ms: int = 0
+	next_sample_monotonic_s: float = 0.0
+
+
 @dataclass
 class DisplayOptions:
 	show_points: bool = True
@@ -70,6 +95,7 @@ class DisplayOptions:
 	show_status: bool = True
 	show_warnings: bool = True
 	show_mask_only: bool = False
+	show_blue_mask_only: bool = False
 
 	@classmethod
 	def from_mapping(cls, values: dict[str, Any]) -> "DisplayOptions":
@@ -85,6 +111,7 @@ class DisplayOptions:
 				("show_status", True),
 				("show_warnings", True),
 				("show_mask_only", False),
+				("show_blue_mask_only", False),
 			)
 		})
 
@@ -97,6 +124,7 @@ class ApplicationState:
 	current_raw_frame: np.ndarray | None = None
 	current_gray_frame: np.ndarray | None = None
 	current_detections: list[dict[str, Any]] = field(default_factory=list)
+	current_blue_detections: list[dict[str, Any]] = field(default_factory=list)
 	current_circles: list[tuple[int, int, int]] = field(default_factory=list)
 	current_tracked_points: list[TrackedPoint] = field(default_factory=list)
 	current_frame_number: int = 0
@@ -121,13 +149,21 @@ class ApplicationState:
 	known_reference_force: float | None = None
 	pending_dataset_frames: int = 0
 	pending_dataset_invalid_retries: int = 0
+	pending_dataset_batches: list[DatasetBatch] = field(default_factory=list)
+	dataset_batch_sequence: int = 0
 	loaded_force_model: ForceModel | None = None
 	current_force_prediction: ForcePrediction | None = None
 	force_measurement_enabled: bool = False
 	calibration_mode: bool = False
+	blue_calibration_mode: bool = False
 	measure_mode: bool = False
 	measure_points: list[tuple[int, int]] = field(default_factory=list)
 	selected_calibration_blob: dict[str, Any] | None = None
+	selected_blue_calibration_blob: dict[str, Any] | None = None
+	blue_tracker: BlueBlobTracker | None = None
+	blue_origin_relative_position: tuple[float, float] | None = None
+	blue_relative_unavailable_reason: str = "Blue target is not selected"
+	last_click_rejection_reason: str = ""
 	tracking_enabled: bool = False
 	last_dataset_result: str = ""
 	runtime_warnings: list[str] = field(default_factory=list)
@@ -135,6 +171,8 @@ class ApplicationState:
 	def __post_init__(self) -> None:
 		if self.display_options is None:
 			self.display_options = DisplayOptions.from_mapping(self.config.display)
+		if self.blue_tracker is None:
+			self.blue_tracker = BlueBlobTracker(self.config.blue_tracking)
 
 	# Compatibility names used by the command surface.
 	@property
@@ -191,6 +229,48 @@ class ApplicationState:
 			),
 		}
 
+	def start_calibration(self) -> None:
+		"""Arm blob-click calibration using the configured HSV preset."""
+		if (
+			self.measure_mode
+			or self.reference_origin_selection_mode
+			or self.origin_reacquisition_selection_mode
+			or self.blue_calibration_mode
+		):
+			raise RuntimeError("Turn off the other mouse modes first")
+		apply_calibration_preset(self.config)
+		self.calibration_mode = True
+		self.selected_calibration_blob = None
+
+	def stop_calibration(self) -> None:
+		self.calibration_mode = False
+
+	def clear_calibration_selection(self) -> None:
+		self.selected_calibration_blob = None
+
+	def start_blue_calibration(self) -> None:
+		"""Arm blue click calibration; a successful click also binds tracking."""
+		if (
+			self.measure_mode
+			or self.calibration_mode
+			or self.reference_origin_selection_mode
+			or self.origin_reacquisition_selection_mode
+		):
+			raise RuntimeError("Turn off the other mouse modes first")
+		self.blue_calibration_mode = True
+		self.selected_blue_calibration_blob = None
+
+	def stop_blue_calibration(self) -> None:
+		"""Leave click mode without stopping an already selected target track."""
+		self.blue_calibration_mode = False
+
+	def clear_blue_target(self) -> None:
+		self.selected_blue_calibration_blob = None
+		self.blue_origin_relative_position = None
+		self.blue_relative_unavailable_reason = "Blue target is not selected"
+		if self.blue_tracker is not None:
+			self.blue_tracker.clear()
+
 	def reference_start(self, indices: tuple[int, ...] = ()) -> None:
 		if not self.current_detections:
 			raise RuntimeError("No red blobs are currently detected")
@@ -222,6 +302,7 @@ class ApplicationState:
 		if (
 			self.measure_mode
 			or self.calibration_mode
+			or self.blue_calibration_mode
 			or self.origin_reacquisition_selection_mode
 		):
 			raise RuntimeError("Turn off the other mouse modes first")
@@ -248,6 +329,7 @@ class ApplicationState:
 		if (
 			self.measure_mode
 			or self.calibration_mode
+			or self.blue_calibration_mode
 			or self.reference_origin_selection_mode
 		):
 			raise RuntimeError("Turn off the other mouse modes first")
@@ -263,10 +345,11 @@ class ApplicationState:
 		y: int,
 		flags: int = 0,
 	) -> bool:
-		"""Handle measurement, calibration, setup-origin, then recovery clicks."""
+		"""Handle measurement, color calibration, setup-origin, then recovery clicks."""
 		del flags
 		if event != cv2.EVENT_LBUTTONDOWN:
 			return False
+		self.last_click_rejection_reason = ""
 		click = (int(x), int(y))
 		if self.measure_mode:
 			self.measure_points = (
@@ -278,22 +361,66 @@ class ApplicationState:
 			index = find_blob_index_for_click(self.current_detections, click, 0.0)
 			if index is None:
 				self.selected_calibration_blob = None
-				print(f"Calibration ignored: no detected red blob at ({x}, {y}).")
+				self.last_click_rejection_reason = self._explain_calibration_rejection(click)
+				print(self.last_click_rejection_reason, file=sys.stderr)
 				return False
 			blob = self.current_detections[index]
 			sample = sample_blob_hsv_near_point(self.current_raw_frame, blob, click)
 			if sample is None:
 				self.selected_calibration_blob = None
-				print(f"Calibration ignored: no red pixel could be sampled near ({x}, {y}).")
+				self.last_click_rejection_reason = (
+					f"Calibration rejected at ({x}, {y}). Red-mask sampling: FAIL — "
+					"the selected contour has no red-mask pixel in the latest frame. "
+					"The marker may have moved; try clicking it again."
+				)
+				print(self.last_click_rejection_reason, file=sys.stderr)
 				return False
 			selected = dict(blob)
 			selected["click_point"] = click
 			selected["sample_hsv"] = sample
 			self.selected_calibration_blob = selected
-			calibration = calibrate_from_blob(selected)
+			calibration = calibrate_from_blob(selected, config=self.config)
 			sync_area_tuning_window_from_config()
 			print(
 				f"Calibrated HSV={calibration['sample_hsv']}, "
+				f"area={calibration['area_min']}..{calibration['area_max']}"
+			)
+			return True
+		if self.blue_calibration_mode:
+			index = find_blob_index_for_click(
+				self.current_blue_detections, click, 0.0
+			)
+			if index is None:
+				self.selected_blue_calibration_blob = None
+				self.last_click_rejection_reason = (
+					self._explain_blue_calibration_rejection(click)
+				)
+				print(self.last_click_rejection_reason, file=sys.stderr)
+				return False
+			blob = self.current_blue_detections[index]
+			sample = sample_blue_blob_hsv_near_point(
+				self.current_raw_frame, blob, click, config=self.config
+			)
+			if sample is None:
+				self.selected_blue_calibration_blob = None
+				self.last_click_rejection_reason = (
+					f"Blue calibration rejected at ({x}, {y}). Blue-mask "
+					"sampling failed; the marker may have moved. Try clicking it again."
+				)
+				print(self.last_click_rejection_reason, file=sys.stderr)
+				return False
+			selected = dict(blob)
+			selected["click_point"] = click
+			selected["sample_hsv"] = sample
+			calibration = calibrate_blue_from_blob(selected, config=self.config)
+			if self.current_gray_frame is None or self.blue_tracker is None:
+				raise RuntimeError("No processed camera frame is available for blue tracking")
+			self.blue_tracker.bind(self.current_gray_frame, selected)
+			self.selected_blue_calibration_blob = selected
+			self._update_blue_origin_relative_position()
+			print(
+				f"Blue target selected at {self.blue_tracker.track.current_position}; "
+				f"HSV={calibration['sample_hsv']}, "
 				f"area={calibration['area_min']}..{calibration['area_max']}"
 			)
 			return True
@@ -353,6 +480,144 @@ class ApplicationState:
 			)
 			return True
 		return False
+
+	def _explain_calibration_rejection(self, click: tuple[int, int]) -> str:
+		"""Explain red-mask and area-filter failures in evaluation order."""
+		frame = self.current_raw_frame
+		x, y = click
+		if frame is None:
+			return "Calibration rejected: no camera frame is available yet."
+		height, width = frame.shape[:2]
+		if x < 0 or y < 0 or x >= width or y >= height:
+			return (
+				f"Calibration rejected at ({x}, {y}): click is outside the "
+				f"{width}x{height} camera frame."
+			)
+
+		calibration = self.config.calibration
+		mask = create_red_mask(
+			frame,
+			calibration.red_lower_1,
+			calibration.red_upper_1,
+			calibration.red_lower_2,
+			calibration.red_upper_2,
+		)
+		pixel_is_red = bool(mask[y, x])
+		contours, _ = cv2.findContours(
+			mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+		)
+		contour = next((
+			candidate for candidate in contours
+			if cv2.pointPolygonTest(
+				candidate, (float(x), float(y)), False
+			) >= 0
+		), None)
+		if contour is None:
+			hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[y, x]
+			return (
+				f"Calibration rejected at ({x}, {y}). Red-mask check: FAIL — "
+				f"pixel HSV={tuple(int(value) for value in hsv)} is not inside a "
+				"red-mask contour. Active HSV ranges: "
+				f"{tuple(int(v) for v in calibration.red_lower_1)}.."
+				f"{tuple(int(v) for v in calibration.red_upper_1)} and "
+				f"{tuple(int(v) for v in calibration.red_lower_2)}.."
+				f"{tuple(int(v) for v in calibration.red_upper_2)}."
+			)
+
+		area = float(cv2.contourArea(contour))
+		mask_result = (
+			"pixel is in the red mask"
+			if pixel_is_red else
+			"click is inside a red-mask contour (the clicked pixel itself is not masked)"
+		)
+		minimum = int(calibration.min_area)
+		maximum = calibration.max_area
+		if area < minimum:
+			return (
+				f"Calibration rejected at ({x}, {y}). Red-mask check: PASS — "
+				f"{mask_result}. Area check: FAIL — contour area {area:.1f} px² "
+				f"is below the minimum {minimum} px²."
+			)
+		if maximum is not None and area > int(maximum):
+			return (
+				f"Calibration rejected at ({x}, {y}). Red-mask check: PASS — "
+				f"{mask_result}. Area check: FAIL — contour area {area:.1f} px² "
+				f"is above the maximum {int(maximum)} px²."
+			)
+		if cv2.moments(contour)["m00"] == 0:
+			return (
+				f"Calibration rejected at ({x}, {y}). Red-mask check: PASS — "
+				f"{mask_result}. Contour check: FAIL — the contour has zero moment "
+				"and no usable centre."
+			)
+		return (
+			f"Calibration rejected at ({x}, {y}). Red-mask check: PASS — "
+			f"{mask_result}; contour area {area:.1f} px² is within the active "
+			f"range {minimum}..{'unlimited' if maximum is None else int(maximum)} px². "
+			"The displayed frame may be older than the latest camera frame; try clicking again."
+		)
+
+	def _explain_blue_calibration_rejection(
+		self,
+		click: tuple[int, int],
+	) -> str:
+		"""Explain why a click did not identify a valid blue contour."""
+		frame = self.current_raw_frame
+		x, y = click
+		if frame is None:
+			return "Blue calibration rejected: no camera frame is available yet."
+		height, width = frame.shape[:2]
+		if x < 0 or y < 0 or x >= width or y >= height:
+			return (
+				f"Blue calibration rejected at ({x}, {y}): click is outside "
+				f"the {width}x{height} camera frame."
+			)
+		blue = self.config.blue_calibration
+		mask = create_blue_mask(frame, config=self.config)
+		pixel_is_blue = bool(mask[y, x])
+		contours, _ = cv2.findContours(
+			mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+		)
+		contour = next((
+			candidate for candidate in contours
+			if cv2.pointPolygonTest(
+				candidate, (float(x), float(y)), False
+			) >= 0
+		), None)
+		if contour is None:
+			hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[y, x]
+			return (
+				f"Blue calibration rejected at ({x}, {y}). Blue-mask check: "
+				f"FAIL — pixel HSV={tuple(int(value) for value in hsv)} is not "
+				"inside a blue-mask contour. Active HSV ranges: "
+				f"{tuple(int(v) for v in blue.blue_lower_1)}.."
+				f"{tuple(int(v) for v in blue.blue_upper_1)} and "
+				f"{tuple(int(v) for v in blue.blue_lower_2)}.."
+				f"{tuple(int(v) for v in blue.blue_upper_2)}."
+			)
+		area = float(cv2.contourArea(contour))
+		mask_result = (
+			"pixel is in the blue mask"
+			if pixel_is_blue else
+			"click is inside a blue-mask contour"
+		)
+		if area < int(blue.min_area):
+			return (
+				f"Blue calibration rejected at ({x}, {y}). Blue-mask check: "
+				f"PASS — {mask_result}. Area check: FAIL — contour area "
+				f"{area:.1f} px² is below the minimum {int(blue.min_area)} px²."
+			)
+		if blue.max_area is not None and area > int(blue.max_area):
+			return (
+				f"Blue calibration rejected at ({x}, {y}). Blue-mask check: "
+				f"PASS — {mask_result}. Area check: FAIL — contour area "
+				f"{area:.1f} px² is above the maximum {int(blue.max_area)} px²."
+			)
+		return (
+			f"Blue calibration rejected at ({x}, {y}). Blue-mask check: PASS — "
+			f"{mask_result}; contour area {area:.1f} px² is within the active "
+			"range. The displayed frame may be stale; try clicking again."
+		)
 
 	def _nearest_candidate_index(
 		self,
@@ -643,9 +908,20 @@ class ApplicationState:
 			feature_schema_version=str(
 				self.config.geometry.get("feature_schema_version", "2")
 			),
+			save_raw_coordinates=bool(
+				self.config.dataset.get("save_raw_coordinates", True)
+			),
+			save_compensated_coordinates=bool(
+				self.config.dataset.get("save_compensated_coordinates", True)
+			),
+			save_origin_relative_coordinates=bool(
+				self.config.dataset.get("save_origin_relative_coordinates", True)
+			),
 		)
 		self.pending_dataset_frames = 0
 		self.pending_dataset_invalid_retries = 0
+		self.pending_dataset_batches = []
+		self.dataset_batch_sequence = 0
 		self.mode = (
 			ApplicationMode.FORCE_MEASUREMENT
 			if self.force_measurement_enabled else ApplicationMode.DATA_COLLECTION
@@ -658,21 +934,178 @@ class ApplicationState:
 		force = float(known_force_N)
 		if not np.isfinite(force):
 			raise ValueError("Known force must be finite")
+		if self.pending_dataset_frames:
+			raise RuntimeError(
+				"Cannot change the force label while a sample batch is pending"
+			)
 		self.known_reference_force = force
 
 	def queue_dataset_samples(self, count: int) -> None:
+		"""Queue a compatibility/manual batch without requiring blue or motor data."""
 		if self.dataset_session is None:
 			raise RuntimeError("No dataset session is active")
-		if int(count) < 1:
+		if self.known_reference_force is None:
+			raise RuntimeError("Set a known force before queuing samples")
+		self.dataset_batch_sequence += 1
+		self.queue_dataset_batch(
+			count=count,
+			known_force_N=self.known_reference_force,
+			force_step_id=f"manual-{self.dataset_batch_sequence:04d}",
+			loading_direction="unspecified",
+			repetition=1,
+			require_blue_target=False,
+			require_motor_telemetry=False,
+			sample_interval_ms=int(
+				self.config.dataset.get("sample_interval_ms", 0)
+			),
+		)
+
+	def queue_dataset_batch(
+		self,
+		*,
+		count: int,
+		known_force_N: float,
+		force_step_id: str,
+		loading_direction: str,
+		repetition: int,
+		require_blue_target: bool = True,
+		require_motor_telemetry: bool = False,
+		maximum_motor_telemetry_age_s: float | None = None,
+		sample_interval_ms: int = 0,
+	) -> DatasetBatch:
+		"""Freeze one experiment step so later UI edits cannot relabel its rows."""
+		if self.dataset_session is None:
+			raise RuntimeError("No dataset session is active")
+		try:
+			count_value = int(count)
+			repetition_value = int(repetition)
+			force = float(known_force_N)
+		except (TypeError, ValueError, OverflowError) as exc:
+			raise ValueError("Dataset batch values are invalid") from exc
+		if count_value < 1:
 			raise ValueError("Sample frame count must be positive")
-		self.pending_dataset_frames += int(count)
+		if repetition_value < 1:
+			raise ValueError("Repetition must be positive")
+		try:
+			interval_ms = int(sample_interval_ms)
+		except (TypeError, ValueError, OverflowError) as exc:
+			raise ValueError("Sample interval must be an integer") from exc
+		if interval_ms < 0:
+			raise ValueError("Sample interval cannot be negative")
+		if not np.isfinite(force):
+			raise ValueError("Known force must be finite")
+		step_id = str(force_step_id).strip()
+		if not step_id:
+			raise ValueError("Force step ID must not be empty")
+		direction = str(loading_direction).strip().lower()
+		if direction not in {"loading", "unloading", "baseline", "unspecified"}:
+			raise ValueError("Loading direction is invalid")
+		age_limit = maximum_motor_telemetry_age_s
+		if require_motor_telemetry:
+			if age_limit is None:
+				raise ValueError(
+					"A maximum motor telemetry age is required for automated samples"
+				)
+			age_limit = float(age_limit)
+			if not np.isfinite(age_limit) or age_limit <= 0.0:
+				raise ValueError("Maximum motor telemetry age must be positive")
+
+		selected_point_id = ""
+		if require_blue_target:
+			selected_point_id = self._nearest_deforming_point_to_blue().id
+
+		batch = DatasetBatch(
+			known_force_N=force,
+			force_step_id=step_id,
+			loading_direction=direction,
+			repetition=repetition_value,
+			requested_samples=count_value,
+			remaining_samples=count_value,
+			selected_point_id=selected_point_id,
+			require_blue_target=bool(require_blue_target),
+			require_motor_telemetry=bool(require_motor_telemetry),
+			maximum_motor_telemetry_age_s=age_limit,
+			sample_interval_ms=interval_ms,
+			next_sample_monotonic_s=time.monotonic(),
+		)
+		self.pending_dataset_batches.append(batch)
+		self._sync_pending_dataset_frames()
 		self.pending_dataset_invalid_retries = 0
+		return batch
+
+	def abort_pending_dataset_batch(self) -> DatasetBatch | None:
+		"""Discard only the current queued request; accepted CSV rows stay intact."""
+		if not self.pending_dataset_batches:
+			return None
+		batch = self.pending_dataset_batches.pop(0)
+		self.pending_dataset_invalid_retries = 0
+		self._sync_pending_dataset_frames()
+		self.last_dataset_result = f"ABORTED: {batch.force_step_id}"
+		return batch
+
+	def _sync_pending_dataset_frames(self) -> None:
+		self.pending_dataset_frames = sum(
+			batch.remaining_samples for batch in self.pending_dataset_batches
+		)
+
+	def _consume_pending_dataset_frame(self) -> None:
+		batch = self.pending_dataset_batches[0]
+		remaining = batch.remaining_samples - 1
+		if remaining <= 0:
+			self.pending_dataset_batches.pop(0)
+		else:
+			self.pending_dataset_batches[0] = replace(
+				batch,
+				remaining_samples=remaining,
+				next_sample_monotonic_s=(
+					time.monotonic() + batch.sample_interval_ms / 1000.0
+				),
+			)
+		self._sync_pending_dataset_frames()
+
+	def _schedule_pending_dataset_retry(self, batch: DatasetBatch) -> None:
+		if self.pending_dataset_batches and self.pending_dataset_batches[0] is batch:
+			self.pending_dataset_batches[0] = replace(
+				batch,
+				next_sample_monotonic_s=(
+					time.monotonic() + batch.sample_interval_ms / 1000.0
+				),
+			)
+
+	def _nearest_deforming_point_to_blue(self) -> TrackedPoint:
+		blue_tracker = self.blue_tracker
+		if (
+			blue_tracker is None
+			or not blue_tracker.valid
+			or blue_tracker.track.current_position is None
+		):
+			reason = (
+				"Blue target is not valid"
+				if blue_tracker is None else blue_tracker.invalid_reason
+			)
+			raise RuntimeError(reason or "Blue target is not valid")
+		blue = np.asarray(blue_tracker.track.current_position, dtype=float)
+		candidates: list[tuple[float, str, TrackedPoint]] = []
+		for point in self.current_tracked_points:
+			if (
+				point.point_group != PointGroup.DEFORMING
+				or point.status in {PointStatus.MISSING, PointStatus.INVALID}
+			):
+				continue
+			position = np.asarray(point.current_position, dtype=float)
+			if position.shape != (2,) or not np.all(np.isfinite(position)):
+				continue
+			candidates.append((float(np.linalg.norm(position - blue)), point.id, point))
+		if not candidates:
+			raise RuntimeError("No valid permanent deforming red point is available")
+		return min(candidates, key=lambda item: (item[0], item[1]))[2]
 
 	def stop_dataset(self) -> DatasetSession | None:
 		session = self.dataset_session
 		self.dataset_session = None
 		self.pending_dataset_frames = 0
 		self.pending_dataset_invalid_retries = 0
+		self.pending_dataset_batches = []
 		if self.mode == ApplicationMode.DATA_COLLECTION:
 			self.mode = ApplicationMode.TRACKING if self.tracker else ApplicationMode.DIAGNOSTIC
 		return session
@@ -682,8 +1115,41 @@ class ApplicationState:
 		model_path: str | Path,
 		metadata_path: str | Path | None = None,
 	) -> ForceModel:
-		self.loaded_force_model = ForceModel.load(model_path, metadata_path)
+		model = Path(model_path)
+		if not model.is_absolute():
+			model = Path(__file__).resolve().parent / model
+		metadata = None if metadata_path is None else Path(metadata_path)
+		if metadata is not None and not metadata.is_absolute():
+			metadata = Path(__file__).resolve().parent / metadata
+		self.loaded_force_model = ForceModel.load(model, metadata)
 		return self.loaded_force_model
+
+	def activate_force_model(
+		self,
+		model_path: str | Path,
+		metadata_path: str | Path | None = None,
+	) -> ForceModel:
+		"""Validate a candidate completely before replacing the active model."""
+		candidate = ForceModel.load(model_path, metadata_path)
+		if self.reference_profile is None:
+			raise RuntimeError(
+				"An accepted reference profile is required to activate a model"
+			)
+		candidate.validate_context(
+			reference_profile_id=self.reference_profile.profile_id,
+			geometry_version=str(
+				self.config.geometry.get("geometry_configuration_version", "2")
+			),
+			feature_schema_version=str(
+				self.config.geometry.get("feature_schema_version", "2")
+			),
+		)
+		if self.current_feature_names:
+			candidate.validate_features(self.current_feature_names)
+		# Assignment occurs only after loading and every compatibility check passes.
+		self.loaded_force_model = candidate
+		self.current_force_prediction = None
+		return candidate
 
 	def start_force_inference(self) -> None:
 		if self.loaded_force_model is None:
@@ -715,6 +1181,47 @@ class ApplicationState:
 				for cx, cy, radius in self.current_circles
 			)
 
+	def _update_blue_origin_relative_position(self) -> None:
+		"""Refresh the blue target's camera-axis displacement from REFERENCE_ORIGIN."""
+		self.blue_origin_relative_position = None
+		blue_tracker = self.blue_tracker
+		if blue_tracker is None or not blue_tracker.selected:
+			self.blue_relative_unavailable_reason = "Blue target is not selected"
+			return
+		if not blue_tracker.valid or blue_tracker.track.current_position is None:
+			self.blue_relative_unavailable_reason = (
+				blue_tracker.invalid_reason
+				or f"Blue target tracking is {blue_tracker.track.status.value}"
+			)
+			return
+		if self.tracker is None or self.current_geometry is None:
+			self.blue_relative_unavailable_reason = "Reference origin is not being tracked"
+			return
+		if not self.current_geometry.origin_valid:
+			self.blue_relative_unavailable_reason = "Reference origin is invalid"
+			return
+		origin = self.tracker.get_point(self.tracker.origin_point_id)
+		if origin is None:
+			self.blue_relative_unavailable_reason = "Reference origin is unavailable"
+			return
+		blue_position = np.asarray(
+			blue_tracker.track.current_position, dtype=float
+		)
+		origin_position = np.asarray(origin.current_position, dtype=float)
+		if (
+			blue_position.shape != (2,)
+			or origin_position.shape != (2,)
+			or not np.all(np.isfinite(blue_position))
+			or not np.all(np.isfinite(origin_position))
+		):
+			self.blue_relative_unavailable_reason = "A tracked position is invalid"
+			return
+		relative = blue_position - origin_position
+		self.blue_origin_relative_position = (
+			float(relative[0]), float(relative[1])
+		)
+		self.blue_relative_unavailable_reason = ""
+
 	def _refresh_reference_origin_candidate(self) -> None:
 		if (
 			self.mode != ApplicationMode.REFERENCE_SETUP
@@ -740,6 +1247,8 @@ class ApplicationState:
 		raw_frame: np.ndarray,
 		detections: list[dict[str, Any]] | None = None,
 		timestamp: float | None = None,
+		blue_detections: list[dict[str, Any]] | None = None,
+		motor_telemetry: dict[str, Any] | None = None,
 	) -> np.ndarray:
 		"""Run the single detector→tracker→geometry→consumer frame pipeline."""
 		if raw_frame is None:
@@ -749,7 +1258,21 @@ class ApplicationState:
 		self.current_raw_frame = raw_frame
 		self.current_gray_frame = cv2.cvtColor(raw_frame, cv2.COLOR_BGR2GRAY)
 		self.current_detections = (
-			find_red_blob_data(raw_frame) if detections is None else detections
+			find_red_blob_data(
+				raw_frame,
+				min_area=self.config.calibration.min_area,
+				max_area=self.config.calibration.max_area,
+			)
+			if detections is None else detections
+		)
+		self.current_blue_detections = (
+			find_blue_blob_data(
+				raw_frame,
+				min_area=self.config.blue_calibration.min_area,
+				max_area=self.config.blue_calibration.max_area,
+				config=self.config,
+			)
+			if blue_detections is None else blue_detections
 		)
 		red_mask = create_red_mask(raw_frame)
 		self.current_circles = detect_circles(red_mask)
@@ -802,7 +1325,13 @@ class ApplicationState:
 			self.current_geometry = None
 			self.current_feature_names = []
 
-		self.process_pending_dataset_sample()
+		if self.blue_tracker is not None:
+			self.blue_tracker.update(
+				self.current_gray_frame, self.current_blue_detections
+			)
+		self._update_blue_origin_relative_position()
+
+		self.process_pending_dataset_sample(motor_telemetry)
 		self.process_force_inference()
 		return self.draw_overlays(raw_frame)
 
@@ -822,15 +1351,25 @@ class ApplicationState:
 
 	def status_snapshot(self) -> dict[str, Any]:
 		"""Return detached scalar state for GUI/status consumers."""
+		self._update_blue_origin_relative_position()
 		tracker = self.tracker
 		geometry = self.current_geometry
 		proposal = self.proposed_ransac_result
 		session = self.dataset_session
 		profile = self.reference_profile
+		calibration_blob = self.selected_calibration_blob
+		blue_calibration_blob = self.selected_blue_calibration_blob
+		blue_tracker = self.blue_tracker
+		blue_track = None if blue_tracker is None else blue_tracker.track
 		reacquisition_required = bool(
 			tracker is not None and tracker.origin_reacquisition_required
 		)
 		recording_reason = self._invalid_frame_reason()
+		nearest_red_point_id = ""
+		try:
+			nearest_red_point_id = self._nearest_deforming_point_to_blue().id
+		except RuntimeError:
+			pass
 		return {
 			"frame_number": self.current_frame_number,
 			"frame_size": (
@@ -854,53 +1393,249 @@ class ApplicationState:
 			"tracking_valid": False if tracker is None else tracker.valid,
 			"tracking_quality": 0.0 if tracker is None else tracker.quality,
 			"detected_marker_count": len(self.current_detections),
+			"expected_marker_count": 0 if profile is None else len(profile.points),
+			"detected_blue_candidate_count": len(self.current_blue_detections),
 			"geometry_valid": False if geometry is None else geometry.valid,
 			"geometry_quality": 0.0 if geometry is None else geometry.quality,
 			"origin_valid": False if geometry is None else geometry.origin_valid,
+			"origin_tracking_quality": (
+				0.0 if geometry is None
+				else float(getattr(geometry, "origin_tracking_quality", 0.0))
+			),
+			"feature_schema_version": str(
+				self.config.geometry.get("feature_schema_version", "2")
+			),
+			"feature_names": tuple(self.current_feature_names),
+			"feature_values": (
+				() if geometry is None
+				else tuple(
+					float(value) for value in getattr(geometry, "feature_vector", ())
+				)
+			),
 			"runtime_warnings": list(self.runtime_warnings),
+			"configuration_compatibility_notes": configuration_compatibility_notes(
+				self.config
+			),
 			"display_options": {
 				name: bool(getattr(self.display_options, name))
 				for name in self.display_options.__dataclass_fields__
 			},
+			"calibration_mode": self.calibration_mode,
+			"calibration_selection_available": calibration_blob is not None,
+			"calibration_sample_hsv": (
+				None if calibration_blob is None
+				else calibration_blob.get("sample_hsv")
+			),
+			"calibration_blob_area": (
+				None if calibration_blob is None
+				else float(calibration_blob.get("area", 0.0))
+			),
+			"calibration_min_area": int(self.config.calibration.min_area),
+			"calibration_max_area": self.config.calibration.max_area,
+			"blue_calibration_mode": self.blue_calibration_mode,
+			"blue_calibration_selection_available": blue_calibration_blob is not None,
+			"blue_calibration_sample_hsv": (
+				None if blue_calibration_blob is None
+				else blue_calibration_blob.get("sample_hsv")
+			),
+			"blue_calibration_blob_area": (
+				None if blue_calibration_blob is None
+				else float(blue_calibration_blob.get("area", 0.0))
+			),
+			"blue_calibration_min_area": int(self.config.blue_calibration.min_area),
+			"blue_calibration_max_area": self.config.blue_calibration.max_area,
+			"blue_target_selected": bool(
+				blue_tracker is not None and blue_tracker.selected
+			),
+			"blue_tracking_valid": bool(
+				blue_tracker is not None and blue_tracker.valid
+			),
+			"blue_tracking_status": (
+				BlueTrackStatus.UNSELECTED.value
+				if blue_track is None else blue_track.status.value
+			),
+			"blue_tracking_quality": (
+				0.0 if blue_track is None else float(blue_track.quality)
+			),
+			"blue_tracking_reason": (
+				"" if (
+					blue_tracker is None
+					or not blue_tracker.selected
+					or blue_tracker.valid
+				)
+				else blue_tracker.invalid_reason
+			),
+			"blue_tracking_information": (
+				"" if blue_track is None else blue_track.status_reason
+			),
+			"blue_position": (
+				None if blue_track is None or blue_track.current_position is None
+				else tuple(float(value) for value in blue_track.current_position)
+			),
+			"blue_origin_relative_position": self.blue_origin_relative_position,
+			"blue_relative_position_valid": (
+				self.blue_origin_relative_position is not None
+			),
+			"blue_relative_unavailable_reason": self.blue_relative_unavailable_reason,
+			"nearest_red_point_to_blue": nearest_red_point_id,
 			"dataset_active": session is not None,
+			"dataset_directory": str(self._dataset_directory()),
 			"dataset_experiment_id": "" if session is None else session.experiment_id,
+			"dataset_root": "" if session is None else str(session.root),
 			"dataset_force_N": self.known_reference_force,
 			"dataset_accepted": 0 if session is None else session.accepted,
 			"dataset_rejected": 0 if session is None else session.rejected,
 			"dataset_pending": self.pending_dataset_frames,
+			"dataset_pending_batch": (
+				None if not self.pending_dataset_batches else {
+					"force_step_id": self.pending_dataset_batches[0].force_step_id,
+					"known_force_N": self.pending_dataset_batches[0].known_force_N,
+					"loading_direction": self.pending_dataset_batches[0].loading_direction,
+					"repetition": self.pending_dataset_batches[0].repetition,
+					"requested_samples": self.pending_dataset_batches[0].requested_samples,
+					"remaining_samples": self.pending_dataset_batches[0].remaining_samples,
+					"selected_point_id": self.pending_dataset_batches[0].selected_point_id,
+				}
+			),
 			"dataset_last_result": self.last_dataset_result,
 			"recording_valid": recording_reason is None,
 			"recording_invalid_reason": recording_reason or "",
 		}
 
-	def process_pending_dataset_sample(self) -> bool | None:
-		if self.dataset_session is None or self.pending_dataset_frames <= 0:
-			return None
-		reason = self._invalid_frame_reason()
-		if reason is not None:
+	def _reject_pending_dataset_frame(
+		self,
+		reason: str,
+		*,
+		already_recorded: bool = False,
+	) -> bool:
+		assert self.dataset_session is not None
+		batch = self.pending_dataset_batches[0]
+		if not already_recorded:
 			self.dataset_session.record_rejection(
 				reason,
 				frame_number=self.current_frame_number,
 				timestamp=self.current_timestamp,
 			)
-			self.last_dataset_result = f"REJECTED: {reason}"
-			self.pending_dataset_invalid_retries += 1
-			retry = bool(self.config.dataset.get("retry_invalid_frames", True))
-			limit = max(
-				1, int(self.config.dataset.get("maximum_invalid_frame_retries", 120))
+		self.last_dataset_result = f"REJECTED: {reason}"
+		self.pending_dataset_invalid_retries += 1
+		retry = bool(self.config.dataset.get("retry_invalid_frames", True))
+		limit = max(
+			1, int(self.config.dataset.get("maximum_invalid_frame_retries", 120))
+		)
+		if not retry or self.pending_dataset_invalid_retries >= limit:
+			self._consume_pending_dataset_frame()
+			self.pending_dataset_invalid_retries = 0
+		else:
+			self._schedule_pending_dataset_retry(batch)
+		print(
+			f"Dataset frame {self.current_frame_number} rejected: {reason}; "
+			f"pending={self.pending_dataset_frames}"
+		)
+		return False
+
+	@staticmethod
+	def _validated_motor_telemetry(
+		batch: DatasetBatch,
+		motor_telemetry: dict[str, Any] | None,
+	) -> tuple[dict[str, Any] | None, str | None]:
+		if not batch.require_motor_telemetry:
+			return None, None
+		if not isinstance(motor_telemetry, dict):
+			return None, "Fresh motor telemetry is unavailable"
+		required_numeric = (
+			"position_rad",
+			"velocity_rad_s",
+			"target_torque_Nm",
+			"measured_torque_Nm",
+			"temperature_C",
+			"feedback_monotonic",
+		)
+		detached: dict[str, Any] = {}
+		for key in required_numeric:
+			try:
+				value = float(motor_telemetry[key])
+			except (KeyError, TypeError, ValueError, OverflowError):
+				return None, f"Motor telemetry field {key} is unavailable"
+			if not np.isfinite(value):
+				return None, f"Motor telemetry field {key} is not finite"
+			detached[key] = value
+		state = motor_telemetry.get("state")
+		if not isinstance(state, str) or not state:
+			return None, "Motor telemetry state is unavailable"
+		detached["state"] = state
+		age = time.monotonic() - detached["feedback_monotonic"]
+		if age < 0.0:
+			return None, "Motor telemetry timestamp is in the future"
+		limit = batch.maximum_motor_telemetry_age_s
+		assert limit is not None
+		if age > limit:
+			return None, (
+				f"Motor telemetry is stale ({age:.3f}s; limit {limit:.3f}s)"
 			)
-			if not retry or self.pending_dataset_invalid_retries >= limit:
-				self.pending_dataset_frames -= 1
-				self.pending_dataset_invalid_retries = 0
-			print(
-				f"Dataset frame {self.current_frame_number} rejected: {reason}; "
-				f"pending={self.pending_dataset_frames}"
+		detached["telemetry_age_s"] = age
+		return detached, None
+
+	def process_pending_dataset_sample(
+		self,
+		motor_telemetry: dict[str, Any] | None = None,
+	) -> bool | None:
+		if self.dataset_session is None or not self.pending_dataset_batches:
+			return None
+		batch = self.pending_dataset_batches[0]
+		if time.monotonic() < batch.next_sample_monotonic_s:
+			return None
+		reason = self._invalid_frame_reason()
+		if reason is not None:
+			return self._reject_pending_dataset_frame(reason)
+
+		blue_position: tuple[float, float] | None = None
+		blue_relative: tuple[float, float] | None = None
+		if batch.require_blue_target:
+			self._update_blue_origin_relative_position()
+			blue_tracker = self.blue_tracker
+			if (
+				blue_tracker is None
+				or not blue_tracker.valid
+				or blue_tracker.track.current_position is None
+			):
+				reason = (
+					"Blue target is invalid"
+					if blue_tracker is None else blue_tracker.invalid_reason
+				)
+				return self._reject_pending_dataset_frame(
+					reason or "Blue target is invalid"
+				)
+			if self.blue_origin_relative_position is None:
+				return self._reject_pending_dataset_frame(
+					self.blue_relative_unavailable_reason
+					or "Blue position relative to origin is unavailable"
+				)
+			selected = next(
+				(
+					point for point in self.current_tracked_points
+					if point.id == batch.selected_point_id
+					and point.point_group == PointGroup.DEFORMING
+					and point.status not in {PointStatus.MISSING, PointStatus.INVALID}
+				),
+				None,
 			)
-			return False
-		assert self.dataset_session is not None
+			if selected is None:
+				return self._reject_pending_dataset_frame(
+					"The selected permanent red point is invalid"
+				)
+			blue_position = tuple(
+				float(value) for value in blue_tracker.track.current_position
+			)
+			blue_relative = self.blue_origin_relative_position
+
+		validated_motor, reason = self._validated_motor_telemetry(
+			batch, motor_telemetry
+		)
+		if reason is not None:
+			return self._reject_pending_dataset_frame(reason)
+
 		assert self.current_geometry is not None
 		assert self.tracker is not None
-		assert self.known_reference_force is not None
 		assert self.reference_profile is not None
 		origin = self.tracker.get_point(
 			self.reference_profile.reference_origin_point_id
@@ -908,7 +1643,7 @@ class ApplicationState:
 		accepted = self.dataset_session.add_sample(
 			timestamp=self.current_timestamp,
 			frame_number=self.current_frame_number,
-			known_force_N=self.known_reference_force,
+			known_force_N=batch.known_force_N,
 			points=self.current_tracked_points,
 			geometry=self.current_geometry,
 			raw_frame=self.current_raw_frame,
@@ -918,34 +1653,25 @@ class ApplicationState:
 				self.config.geometry.get("feature_schema_version", "2")
 			),
 			origin_point=origin,
+			force_step_id=batch.force_step_id,
+			loading_direction=batch.loading_direction,
+			repetition=batch.repetition,
+			selected_point_id=batch.selected_point_id,
+			blue_target_position=blue_position,
+			blue_origin_relative_position=blue_relative,
+			motor_telemetry=validated_motor,
 		)
 		if accepted:
-			self.pending_dataset_frames -= 1
+			self._consume_pending_dataset_frame()
 			self.pending_dataset_invalid_retries = 0
 			self.last_dataset_result = "ACCEPTED"
 			print(
 				f"Dataset frame {self.current_frame_number} accepted; "
 				f"pending={self.pending_dataset_frames}"
 			)
-		else:
-			reason = (
-				self.dataset_session.last_rejection_reason
-				or "dataset validation failed"
-			)
-			self.last_dataset_result = f"REJECTED: {reason}"
-			self.pending_dataset_invalid_retries += 1
-			retry = bool(self.config.dataset.get("retry_invalid_frames", True))
-			limit = max(
-				1, int(self.config.dataset.get("maximum_invalid_frame_retries", 120))
-			)
-			if not retry or self.pending_dataset_invalid_retries >= limit:
-				self.pending_dataset_frames -= 1
-				self.pending_dataset_invalid_retries = 0
-			print(
-				f"Dataset frame {self.current_frame_number} rejected: {reason}; "
-				f"pending={self.pending_dataset_frames}"
-			)
-		return accepted
+			return True
+		reason = self.dataset_session.last_rejection_reason or "dataset validation failed"
+		return self._reject_pending_dataset_frame(reason, already_recorded=True)
 
 	def _invalid_prediction(self, warning: str) -> ForcePrediction:
 		model_name = (
@@ -1072,6 +1798,45 @@ class ApplicationState:
 			cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2, cv2.LINE_AA,
 		)
 
+	def _draw_blue_target(self, frame: np.ndarray) -> None:
+		if self.blue_calibration_mode:
+			for detection in self.current_blue_detections:
+				cv2.drawContours(
+					frame, [detection["contour"]], -1, (255, 180, 0), 1,
+					cv2.LINE_AA,
+				)
+		blue_tracker = self.blue_tracker
+		if (
+			blue_tracker is None
+			or not blue_tracker.selected
+			or blue_tracker.track.current_position is None
+		):
+			return
+		position = tuple(
+			int(round(value)) for value in blue_tracker.track.current_position
+		)
+		color = (255, 0, 0) if blue_tracker.valid else (100, 100, 255)
+		cv2.circle(frame, position, 10, color, 2, cv2.LINE_AA)
+		cv2.circle(frame, position, 3, color, -1, cv2.LINE_AA)
+		label = f"BLUE {blue_tracker.track.status.value}"
+		if self.blue_origin_relative_position is not None:
+			dx, dy = self.blue_origin_relative_position
+			label += f" d=({dx:+.1f}, {dy:+.1f}) px"
+			if self.tracker is not None:
+				origin = self.tracker.get_point(self.tracker.origin_point_id)
+				if origin is not None:
+					origin_position = tuple(
+						int(round(value)) for value in origin.current_position
+					)
+					cv2.line(
+						frame, origin_position, position, (255, 120, 0), 1,
+						cv2.LINE_AA,
+					)
+		cv2.putText(
+			frame, label, (position[0] + 12, position[1] - 10),
+			cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA,
+		)
+
 	def _draw_geometry(self, frame: np.ndarray) -> None:
 		if not self.display_options.show_geometry or self.current_geometry is None:
 			return
@@ -1132,6 +1897,21 @@ class ApplicationState:
 				else "TRANSLATION + ROTATION (rigid references)"
 			)
 			lines.append((f"FRAME: {frame_label}", (200, 200, 200)))
+		if self.blue_tracker is not None and self.blue_tracker.selected:
+			blue = self.blue_tracker.track
+			if self.blue_origin_relative_position is None:
+				lines.append((
+					f"BLUE: {blue.status.value} q={blue.quality:.2f}; "
+					f"relative unavailable ({self.blue_relative_unavailable_reason})",
+					(0, 165, 255),
+				))
+			else:
+				dx, dy = self.blue_origin_relative_position
+				lines.append((
+					f"BLUE FROM ORIGIN: dx={dx:+.2f}px dy={dy:+.2f}px "
+					f"q={blue.quality:.2f}",
+					(255, 120, 0),
+				))
 		if self.dataset_session is not None:
 			lines.append((
 				f"DATA: accepted={self.dataset_session.accepted} "
@@ -1186,7 +1966,11 @@ class ApplicationState:
 		return lines
 
 	def draw_overlays(self, raw_frame: np.ndarray) -> np.ndarray:
-		if self.display_options.show_mask_only:
+		if self.display_options.show_blue_mask_only:
+			mask = create_blue_mask(raw_frame, config=self.config)
+			frame = np.zeros_like(raw_frame)
+			frame[:, :, 0] = mask
+		elif self.display_options.show_mask_only:
 			mask = create_red_mask(raw_frame)
 			frame = np.zeros_like(raw_frame)
 			frame[:, :, 2] = mask
@@ -1199,8 +1983,8 @@ class ApplicationState:
 			draw_tracking(frame, self.current_tracked_points)
 		self._draw_reference_proposal(frame)
 		self._draw_origin_candidate(frame)
+		self._draw_blue_target(frame)
 		self._draw_geometry(frame)
-		draw_blob_calibration_info(frame, self.selected_calibration_blob)
 		if len(self.measure_points) == 2:
 			draw_measurement(frame, self.measure_points[0], self.measure_points[1])
 

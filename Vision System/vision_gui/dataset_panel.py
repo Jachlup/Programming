@@ -49,6 +49,7 @@ class DatasetPanel(QWidget):
 		self.start = QPushButton("Start session")
 		self.change_force = QPushButton("Change force label")
 		self.sample = QPushButton("Queue sample batch")
+		self.abort = QPushButton("Abort pending batch")
 		self.stop = QPushButton("Stop session")
 		self.status = QPushButton("Print dataset status")
 		self.start.clicked.connect(self._start)
@@ -58,10 +59,13 @@ class DatasetPanel(QWidget):
 		self.sample.clicked.connect(
 			lambda: controller.execute(f"dataset_sample {self.frames.value()}")
 		)
+		self.abort.clicked.connect(lambda: controller.execute("dataset_abort"))
 		self.stop.clicked.connect(lambda: controller.execute("dataset_stop"))
 		self.status.clicked.connect(lambda: controller.execute("dataset_status"))
 		buttons = QHBoxLayout()
-		for button in (self.start, self.change_force, self.sample, self.stop, self.status):
+		for button in (
+			self.start, self.change_force, self.sample, self.abort, self.stop, self.status
+		):
 			buttons.addWidget(button)
 
 		self.session = StatusBadge("Inactive")
@@ -149,6 +153,8 @@ class DatasetPanel(QWidget):
 		)
 		self.start.setEnabled(not active and tracking_ready)
 		self.experiment.setEnabled(not active)
-		self.change_force.setEnabled(active)
+		pending = int(state.get("dataset_pending", 0))
+		self.change_force.setEnabled(active and pending == 0)
 		self.sample.setEnabled(active and self._camera_running)
+		self.abort.setEnabled(active and pending > 0)
 		self.stop.setEnabled(active)

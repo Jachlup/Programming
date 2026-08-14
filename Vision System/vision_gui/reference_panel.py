@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 	QLineEdit,
 	QPlainTextEdit,
 	QPushButton,
+	QScrollArea,
 	QVBoxLayout,
 	QWidget,
 )
@@ -22,7 +23,7 @@ from .common import StatusBadge
 
 
 class ReferencePanel(QWidget):
-	def __init__(self, controller, parent=None) -> None:
+	def __init__(self, controller, parent=None, *, compact: bool = False) -> None:
 		super().__init__(parent)
 		self.controller = controller
 		self._state: dict = {}
@@ -104,13 +105,20 @@ class ReferencePanel(QWidget):
 		browse_save.clicked.connect(lambda: self._browse(True))
 		self.load.clicked.connect(self._load)
 		self.save.clicked.connect(self._save)
-		path_buttons = QHBoxLayout()
-		path_buttons.addWidget(browse_load)
-		path_buttons.addWidget(browse_save)
-		path_buttons.addWidget(self.load)
-		path_buttons.addWidget(self.save)
 		profile_layout = QVBoxLayout()
 		profile_layout.addWidget(self.path)
+		if compact:
+			path_buttons = QGridLayout()
+			path_buttons.addWidget(browse_load, 0, 0)
+			path_buttons.addWidget(browse_save, 0, 1)
+			path_buttons.addWidget(self.load, 1, 0)
+			path_buttons.addWidget(self.save, 1, 1)
+		else:
+			path_buttons = QHBoxLayout()
+			path_buttons.addWidget(browse_load)
+			path_buttons.addWidget(browse_save)
+			path_buttons.addWidget(self.load)
+			path_buttons.addWidget(self.save)
 		profile_layout.addLayout(path_buttons)
 		profile_box = QGroupBox("Reference profile")
 		profile_box.setLayout(profile_layout)
@@ -120,23 +128,44 @@ class ReferencePanel(QWidget):
 		self.details.setPlaceholderText("RANSAC validity, fatal errors, and warnings appear here.")
 
 		instruction = QLabel(
+			"Click the live image beside these controls when origin selection or "
+			"reacquisition is armed. The click is resolved against the current blob contours."
+			if compact else
 			"Origin clicks are made on the Camera tab. The click is resolved against "
 			"the currently detected blob contours."
 		)
 		instruction.setWordWrap(True)
 
-		left = QVBoxLayout()
-		left.addWidget(status_box)
-		left.addWidget(workflow_box)
-		left.addWidget(profile_box)
-		left.addStretch()
-		layout = QHBoxLayout(self)
-		layout.addLayout(left, 1)
-		right = QVBoxLayout()
-		right.addWidget(instruction)
-		right.addWidget(QLabel("Proposal diagnostics"))
-		right.addWidget(self.details, 1)
-		layout.addLayout(right, 1)
+		if compact:
+			self.details.setMinimumHeight(140)
+			content = QWidget()
+			content_layout = QVBoxLayout(content)
+			content_layout.addWidget(instruction)
+			content_layout.addWidget(status_box)
+			content_layout.addWidget(workflow_box)
+			content_layout.addWidget(profile_box)
+			content_layout.addWidget(QLabel("Proposal diagnostics"))
+			content_layout.addWidget(self.details)
+			content_layout.addStretch()
+			scroll = QScrollArea()
+			scroll.setWidgetResizable(True)
+			scroll.setWidget(content)
+			layout = QVBoxLayout(self)
+			layout.setContentsMargins(0, 0, 0, 0)
+			layout.addWidget(scroll)
+		else:
+			left = QVBoxLayout()
+			left.addWidget(status_box)
+			left.addWidget(workflow_box)
+			left.addWidget(profile_box)
+			left.addStretch()
+			layout = QHBoxLayout(self)
+			layout.addLayout(left, 1)
+			right = QVBoxLayout()
+			right.addWidget(instruction)
+			right.addWidget(QLabel("Proposal diagnostics"))
+			right.addWidget(self.details, 1)
+			layout.addLayout(right, 1)
 
 		controller.state_updated.connect(self.update_state)
 		controller.camera_state_changed.connect(self.update_camera_state)

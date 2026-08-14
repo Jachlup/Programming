@@ -444,6 +444,8 @@ def train(
 			grouping=split_group,
 		)
 	)
+	_grouping, all_groups = _candidate_groups(loaded.records, actual_grouping)
+	training_groups = sorted(set(all_groups) - set(validation_groups))
 	train_x, train_y = _matrix(training)
 	validation_x, validation_y = _matrix(validation)
 	estimator = RidgeRegressor(alpha=float(ridge_alpha)).fit(train_x, train_y)
@@ -476,6 +478,7 @@ def train(
 			"random_seed": int(random_seed),
 			"validation_fraction": float(validation_fraction),
 			"split_group": actual_grouping,
+			"training_groups": training_groups,
 			"validation_groups": validation_groups,
 			"training_sample_count": len(training),
 			"validation_sample_count": len(validation),
@@ -503,6 +506,8 @@ def train(
 		"training_metrics": training_metrics,
 		"validation_metrics": validation_metrics,
 		"validation_metrics_by_force_N": by_force,
+		"training_groups": training_groups,
+		"validation_groups": validation_groups,
 		"rejected_reasons": loaded.rejected_reasons,
 	}
 	return estimator, metadata, report

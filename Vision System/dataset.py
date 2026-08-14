@@ -19,7 +19,7 @@ from geometry import GeometryResult
 from tracking import PointStatus, ReferenceProfile, TrackedPoint
 
 
-DATASET_SCHEMA_VERSION = "2"
+DATASET_SCHEMA_VERSION = "3"
 
 
 def _utc_now() -> datetime:
@@ -51,6 +51,62 @@ def _json_ready(value: Any) -> Any:
 
 def _json_dump(value: Any) -> str:
 	return json.dumps(_json_ready(value), allow_nan=False, separators=(",", ":"))
+
+
+def _optional_point(
+	value: tuple[float, float] | None,
+	label: str,
+) -> tuple[float, float] | None:
+	if value is None:
+		return None
+	point = np.asarray(value, dtype=np.float64)
+	if point.shape != (2,) or not np.all(np.isfinite(point)):
+		raise ValueError(f"{label} must contain two finite coordinates")
+	return float(point[0]), float(point[1])
+
+
+def _motor_telemetry_values(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+	fields = {
+		"motor_position_rad": "position_rad",
+		"motor_velocity_rad_s": "velocity_rad_s",
+		"motor_target_torque_Nm": "target_torque_Nm",
+		"motor_measured_torque_Nm": "measured_torque_Nm",
+		"motor_temperature_C": "temperature_C",
+		"motor_telemetry_monotonic_s": "feedback_monotonic",
+		"motor_telemetry_age_s": "telemetry_age_s",
+	}
+	if snapshot is None:
+		return {
+			**{output: "" for output in fields},
+			"motor_state": "",
+		}
+	if not isinstance(snapshot, dict):
+		raise ValueError("motor telemetry must be a detached mapping")
+
+	result: dict[str, Any] = {}
+	for output, source in fields.items():
+		value = snapshot.get(source)
+		if value is None or value == "":
+			result[output] = ""
+			continue
+		try:
+			numeric = float(value)
+		except (TypeError, ValueError, OverflowError) as exc:
+			raise ValueError(f"{source} is not numeric") from exc
+		if not math.isfinite(numeric):
+			raise ValueError(f"{source} is not finite")
+		if source == "telemetry_age_s" and numeric < 0.0:
+			raise ValueError("telemetry_age_s cannot be negative")
+		result[output] = numeric
+	state = snapshot.get("state", "")
+	if state is None:
+		state = ""
+	if isinstance(state, Enum):
+		state = state.value
+	if not isinstance(state, str):
+		raise ValueError("motor state must be text")
+	result["motor_state"] = state
+	return result
 
 
 def _coordinates_from_points(points: Iterable[TrackedPoint]) -> dict[str, tuple[float, float]]:
@@ -90,6 +146,9 @@ class DatasetSession:
 	profile_id: str
 	geometry_id: str
 	save_images: bool = True
+	save_raw_coordinates: bool = True
+	save_compensated_coordinates: bool = True
+	save_origin_relative_coordinates: bool = True
 	feature_schema_version: str = "1"
 	reference_origin_point_id: str = ""
 	acquisition_batch_id: str = ""
@@ -109,6 +168,8 @@ class DatasetSession:
 		"experiment_id",
 		"acquisition_batch_id",
 		"force_step_id",
+		"loading_direction",
+		"repetition",
 		"sample_id",
 		"known_force_N",
 		"tracking_valid",
@@ -137,6 +198,18 @@ class DatasetSession:
 		"geometry_fatal_errors",
 		"feature_names",
 		"feature_values",
+		"selected_point_id",
+		"selected_point_origin_relative_position",
+		"blue_target_position",
+		"blue_origin_relative_position",
+		"motor_position_rad",
+		"motor_velocity_rad_s",
+		"motor_target_torque_Nm",
+		"motor_measured_torque_Nm",
+		"motor_temperature_C",
+		"motor_state",
+		"motor_telemetry_monotonic_s",
+		"motor_telemetry_age_s",
 		"image_filename",
 		"reference_profile_identifier",
 		"reference_profile_configuration_version",
@@ -156,6 +229,9 @@ class DatasetSession:
 		feature_schema_version: str = "1",
 		acquisition_batch_id: str | None = None,
 		reference_origin_point_id: str | None = None,
+		save_raw_coordinates: bool = True,
+		save_compensated_coordinates: bool = True,
+		save_origin_relative_coordinates: bool = True,
 	) -> "DatasetSession":
 		"""Create a fresh acquisition directory without overwriting prior samples."""
 		experiment = _safe_identifier(str(experiment_id), "experiment_id")
@@ -208,6 +284,11 @@ class DatasetSession:
 			),
 			"geometry_configuration_identifier": str(geometry_id),
 			"save_images": bool(save_images),
+			"save_raw_coordinates": bool(save_raw_coordinates),
+			"save_compensated_coordinates": bool(save_compensated_coordinates),
+			"save_origin_relative_coordinates": bool(
+				save_origin_relative_coordinates
+			),
 		}
 		with (root / "metadata.yaml").open("x", encoding="utf-8") as stream:
 			yaml.safe_dump(metadata, stream, sort_keys=False)
@@ -218,6 +299,11 @@ class DatasetSession:
 			profile_id=str(profile.profile_id),
 			geometry_id=str(geometry_id),
 			save_images=bool(save_images),
+			save_raw_coordinates=bool(save_raw_coordinates),
+			save_compensated_coordinates=bool(save_compensated_coordinates),
+			save_origin_relative_coordinates=bool(
+				save_origin_relative_coordinates
+			),
 			feature_schema_version=str(feature_schema_version),
 			reference_origin_point_id=origin_id,
 			acquisition_batch_id=batch,
@@ -264,6 +350,12 @@ class DatasetSession:
 		origin_point: TrackedPoint | None = None,
 		origin_valid: bool | None = None,
 		force_step_id: str | int = "",
+		loading_direction: str = "unspecified",
+		repetition: int = 1,
+		selected_point_id: str = "",
+		blue_target_position: tuple[float, float] | None = None,
+		blue_origin_relative_position: tuple[float, float] | None = None,
+		motor_telemetry: dict[str, Any] | None = None,
 	) -> bool:
 		"""Validate and append one complete force-sensing sample."""
 		try:
@@ -277,6 +369,26 @@ class DatasetSession:
 				"timestamp or known force is not finite",
 				actual_frame_number,
 				actual_timestamp if math.isfinite(actual_timestamp) else 0.0,
+			)
+		step_id = str(force_step_id).strip()
+		if not step_id:
+			return self._reject(
+				"force_step_id is empty", actual_frame_number, actual_timestamp
+			)
+		direction = str(loading_direction).strip().lower()
+		if direction not in {"loading", "unloading", "baseline", "unspecified"}:
+			return self._reject(
+				"loading direction is invalid", actual_frame_number, actual_timestamp
+			)
+		try:
+			repetition_value = int(repetition)
+		except (TypeError, ValueError, OverflowError):
+			return self._reject(
+				"repetition is invalid", actual_frame_number, actual_timestamp
+			)
+		if repetition_value < 1:
+			return self._reject(
+				"repetition must be positive", actual_frame_number, actual_timestamp
 			)
 
 		schema_version = (
@@ -398,6 +510,21 @@ class DatasetSession:
 					float(compensated_origin_position[0]),
 					float(compensated_origin_position[1]),
 				)
+			selected_id = str(selected_point_id).strip()
+			selected_relative_position = None
+			if selected_id:
+				if selected_id not in origin_relative_points:
+					return self._reject(
+						"selected red point is unavailable in origin-relative geometry",
+						actual_frame_number,
+						actual_timestamp,
+					)
+				selected = origin_relative_points[selected_id]
+				selected_relative_position = (float(selected[0]), float(selected[1]))
+			blue_target = _optional_point(blue_target_position, "blue target position")
+			blue_relative = _optional_point(
+				blue_origin_relative_position, "blue origin-relative position"
+			)
 		except (TypeError, ValueError, IndexError) as exc:
 			return self._reject(
 				f"coordinate serialization failed: {exc}",
@@ -427,16 +554,34 @@ class DatasetSession:
 				actual_timestamp,
 			)
 		try:
+			motor_values = _motor_telemetry_values(motor_telemetry)
 			serialised = {
-				"raw_origin_position": _json_dump(raw_origin_position),
-				"compensated_origin_position": _json_dump(compensated_origin_position),
-				"raw_point_coordinates": _json_dump(raw_points),
-				"compensated_point_coordinates": _json_dump(compensated_points),
-				"origin_relative_point_coordinates": _json_dump(origin_relative_points),
-				"unloaded_origin_relative_point_coordinates": _json_dump(
-					unloaded_relative_points
+				"raw_origin_position": (
+					_json_dump(raw_origin_position) if self.save_raw_coordinates else ""
 				),
-				"relative_point_displacements": _json_dump(relative_displacements),
+				"compensated_origin_position": (
+					_json_dump(compensated_origin_position)
+					if self.save_compensated_coordinates else ""
+				),
+				"raw_point_coordinates": (
+					_json_dump(raw_points) if self.save_raw_coordinates else ""
+				),
+				"compensated_point_coordinates": (
+					_json_dump(compensated_points)
+					if self.save_compensated_coordinates else ""
+				),
+				"origin_relative_point_coordinates": (
+					_json_dump(origin_relative_points)
+					if self.save_origin_relative_coordinates else ""
+				),
+				"unloaded_origin_relative_point_coordinates": (
+					_json_dump(unloaded_relative_points)
+					if self.save_origin_relative_coordinates else ""
+				),
+				"relative_point_displacements": (
+					_json_dump(relative_displacements)
+					if self.save_origin_relative_coordinates else ""
+				),
 				"point_statuses": _json_dump(statuses),
 				"point_tracking_qualities": _json_dump(point_qualities),
 				"geometry_warnings": _json_dump(getattr(geometry, "warnings", [])),
@@ -445,6 +590,11 @@ class DatasetSession:
 				),
 				"feature_names": _json_dump(feature_names),
 				"feature_values": _json_dump(feature_values),
+				"selected_point_origin_relative_position": _json_dump(
+					selected_relative_position
+				),
+				"blue_target_position": _json_dump(blue_target),
+				"blue_origin_relative_position": _json_dump(blue_relative),
 			}
 		except (TypeError, ValueError) as exc:
 			return self._reject(
@@ -480,7 +630,9 @@ class DatasetSession:
 			"frame_number": actual_frame_number,
 			"experiment_id": self.experiment_id,
 			"acquisition_batch_id": self.acquisition_batch_id,
-			"force_step_id": str(force_step_id),
+			"force_step_id": step_id,
+			"loading_direction": direction,
+			"repetition": repetition_value,
 			"sample_id": sample_id,
 			"known_force_N": actual_force,
 			"tracking_valid": actual_tracker_valid,
@@ -521,6 +673,15 @@ class DatasetSession:
 			"geometry_fatal_errors": serialised["geometry_fatal_errors"],
 			"feature_names": serialised["feature_names"],
 			"feature_values": serialised["feature_values"],
+			"selected_point_id": selected_id,
+			"selected_point_origin_relative_position": serialised[
+				"selected_point_origin_relative_position"
+			],
+			"blue_target_position": serialised["blue_target_position"],
+			"blue_origin_relative_position": serialised[
+				"blue_origin_relative_position"
+			],
+			**motor_values,
 			"image_filename": image_name,
 			"reference_profile_identifier": self.profile_id,
 			"reference_profile_configuration_version": self.profile_configuration_version,
