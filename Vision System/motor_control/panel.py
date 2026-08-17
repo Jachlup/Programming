@@ -156,20 +156,35 @@ class MotorPanel(QWidget):
 			"Most-negative torque the operator may command. Its magnitude cannot "
 			"exceed 4 Nm or be smaller than the configured homing-torque magnitude."
 		)
+		self.range_maximum_velocity = self._spin(
+			0.001,
+			5.0,
+			self.config.profile_velocity_rad_s,
+			" rad/s",
+		)
+		self.range_maximum_acceleration = self._spin(
+			0.001,
+			20.0,
+			self.config.profile_acceleration_rad_s2,
+			" rad/s²",
+		)
 		self.apply_ranges_button = QPushButton("Apply and save ranges")
 		self.apply_ranges_button.clicked.connect(self._apply_configured_ranges)
 		self.range_minimum_position.valueChanged.connect(self._update_range_editor)
 		self.range_maximum_position.valueChanged.connect(self._update_range_editor)
 		range_form = QFormLayout()
-		range_form.addRow("Minimum position", self.range_minimum_position)
+		range_form.addRow("Minimum profiled position", self.range_minimum_position)
 		range_form.addRow("Maximum position", self.range_maximum_position)
 		range_form.addRow("Open-button target", self.range_open_position)
 		range_form.addRow("Closing limit (most negative)", self.range_minimum_torque)
 		range_form.addRow("Maximum closing torque", QLabel("0 Nm (release)"))
+		range_form.addRow("Maximum velocity", self.range_maximum_velocity)
+		range_form.addRow("Maximum acceleration", self.range_maximum_acceleration)
 		range_help = QLabel(
 			"Ranges can only be changed while disconnected. They are saved to "
 			"motor-config.yaml and sent to the C++ bridge on the next connection. "
-			"The separate controller-register ceiling remains ±10 Nm."
+			"Hard ceilings remain 5 rad/s, 20 rad/s², and ±10 Nm at the "
+			"controller register."
 		)
 		range_help.setWordWrap(True)
 		range_layout = QVBoxLayout()
@@ -390,12 +405,16 @@ class MotorPanel(QWidget):
 		maximum_position = self.range_maximum_position.value()
 		open_position = self.range_open_position.value()
 		minimum_torque = self.range_minimum_torque.value()
+		maximum_velocity = self.range_maximum_velocity.value()
+		maximum_acceleration = self.range_maximum_acceleration.value()
 		if not self._confirm_action(
 			"Apply motor ranges",
 			f"Save position range {minimum_position:g}..{maximum_position:g} rad "
 			f"with open target "
 			f"{open_position:g} rad, and closing torque range "
-			f"{minimum_torque:g}..0 Nm?",
+			f"{minimum_torque:g}..0 Nm, maximum velocity "
+			f"{maximum_velocity:g} rad/s, and maximum acceleration "
+			f"{maximum_acceleration:g} rad/s²?",
 		):
 			return
 		self.controller.configure_ranges(
@@ -403,6 +422,8 @@ class MotorPanel(QWidget):
 			maximum_position,
 			open_position,
 			minimum_torque,
+			maximum_velocity,
+			maximum_acceleration,
 		)
 
 	def _apply_runtime_configuration(self, config: MotorConfig) -> None:
@@ -423,6 +444,12 @@ class MotorPanel(QWidget):
 				-abs(config.homing_torque_Nm),
 			)
 			self.range_minimum_torque.setValue(-config.maximum_closing_torque_Nm)
+		with QSignalBlocker(self.range_maximum_velocity):
+			self.range_maximum_velocity.setValue(config.profile_velocity_rad_s)
+		with QSignalBlocker(self.range_maximum_acceleration):
+			self.range_maximum_acceleration.setValue(
+				config.profile_acceleration_rad_s2
+			)
 		with QSignalBlocker(self.position):
 			self.position.setRange(
 				config.minimum_position_rad,
@@ -430,6 +457,13 @@ class MotorPanel(QWidget):
 			)
 		with QSignalBlocker(self.torque):
 			self.torque.setRange(-config.maximum_closing_torque_Nm, 0.0)
+		with QSignalBlocker(self.velocity):
+			self.velocity.setRange(0.001, config.profile_velocity_rad_s)
+		with QSignalBlocker(self.acceleration):
+			self.acceleration.setRange(
+				0.001,
+				config.profile_acceleration_rad_s2,
+			)
 		self._configuration_mapping = config.to_mapping()
 
 	def append_debug_events(self, events) -> None:

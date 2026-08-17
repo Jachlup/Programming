@@ -34,7 +34,7 @@ DISPLAY_OPTIONS = (
 class CameraPanel(QWidget):
 	open_tuning_requested = Signal()
 
-	def __init__(self, controller, parent=None) -> None:
+	def __init__(self, controller, parent=None, *, embed_video: bool = True) -> None:
 		super().__init__(parent)
 		self.controller = controller
 		self._camera_running = False
@@ -203,8 +203,11 @@ class CameraPanel(QWidget):
 		self.control_tabs.addTab(self.blue_blob_panel, "Blue blob")
 		self.control_tabs.addTab(self.reference_panel, "Reference setup")
 		body = QHBoxLayout()
-		body.addWidget(self.video, 1)
+		if embed_video:
+			body.addWidget(self.video, 1)
 		body.addWidget(self.control_tabs)
+		if not embed_video:
+			body.addStretch(1)
 
 		layout = QVBoxLayout(self)
 		layout.addLayout(buttons)

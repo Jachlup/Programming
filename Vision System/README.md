@@ -91,16 +91,19 @@ connected RealSense camera:
 ```
 
 The window contains Camera, Tuning, Dataset, Motor, Collection, and Training
-tabs. The Camera workspace keeps
-the live image visible on the left while Runtime, red Calibration, Blue blob,
-and Reference setup controls are selected on the right. This lets origin selection and
-reacquisition happen without switching away from the reference workflow. The
-command console at the bottom accepts every command in the existing `COMMANDS`
-registry. Buttons and checkboxes use that same command layer. Camera acquisition
-and image processing run on one dedicated Qt worker thread. Motor communication
-runs on a second worker thread, and model training runs in a cancellable child
-process. Closing the window first stops/disables/disconnects the motor, then
-stops the camera worker; a running training process is also terminated.
+tabs. A persistent **Live camera preview** dock stays visible beside every tab,
+including while camera settings are adjusted in Tuning. It is resizable and can
+be dragged or floated into a separate window when a second monitor is useful,
+but it has no close button. The same image widget handles calibration and
+reference clicks, so the visible pixels and click coordinates always match.
+Runtime, red Calibration, Blue blob, and Reference setup controls remain in the
+Camera tab. The command console at the bottom accepts every command in the
+existing `COMMANDS` registry. Buttons and checkboxes use that same command
+layer. Camera acquisition and image processing run on one dedicated Qt worker
+thread. Motor communication runs on a second worker thread, and model training
+runs in a cancellable child process. Closing the window first
+stops/disables/disconnects the motor, then stops the camera worker; a running
+training process is also terminated.
 
 The Tuning tab distinguishes editor values, values applied to the running
 process, and values saved in `camera-config.yaml`. Apply validates editor values;
@@ -194,11 +197,19 @@ The **Configured motor ranges** box is editable only while the motor is
 disconnected. It sets both position endpoints (`-1..0 rad` for the selectable
 minimum and up to `2.2 rad` for the maximum), the Open-button target, and the
 negative closing-torque limit (never beyond `-4 Nm`; the other endpoint is
-fixed at `0 Nm`). The position range must include the homed `0 rad` origin.
-**Apply and save ranges** validates the selection, updates the command fields,
-and atomically saves `motor-config.yaml`. The new limits are sent to the C++
-bridge on the next connection. The controller-register ceiling remains fixed
-at a magnitude of `10 Nm`.
+fixed at `0 Nm`). It also sets the maximum profile velocity and acceleration,
+bounded by the independent hard ceilings of `5 rad/s` and `20 rad/s²`. The
+position range must include the homed `0 rad` origin. **Apply and save ranges**
+validates the selection, updates the command fields, and atomically saves
+`motor-config.yaml`. The new limits are sent to the C++ bridge on the next
+connection. The controller-register ceiling remains fixed at a magnitude of
+`10 Nm`.
+
+The configured minimum position is a limit for deliberate profiled-position
+commands only. It is not a live-feedback or homing interlock: before homing, the
+encoder has not been zeroed and may legitimately report a value below that
+minimum. Such a value therefore does not block connection or homing. The
+configured maximum position remains an active feedback safety check.
 
 Motor feedback shows state, position, velocity, target and measured torque,
 torque error and confirmation, feedback age, temperature, elapsed motion time,

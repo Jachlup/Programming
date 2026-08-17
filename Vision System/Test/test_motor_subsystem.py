@@ -209,18 +209,20 @@ def test_ranges_update_only_while_disconnected(worker) -> None:
 	instance.command_completed.connect(
 		lambda command, ok, message: completed.append((command, ok, message))
 	)
-	instance.configure_ranges(-1.0, 1.8, 1.6, -2.0)
+	instance.configure_ranges(-1.0, 1.8, 1.6, -2.0, 3.0, 12.0)
 	assert instance.config.minimum_position_rad == pytest.approx(-1.0)
 	assert instance.config.maximum_position_rad == pytest.approx(1.8)
 	assert instance.config.open_position_rad == pytest.approx(1.6)
 	assert instance.config.maximum_closing_torque_Nm == pytest.approx(2.0)
+	assert instance.config.profile_velocity_rad_s == pytest.approx(3.0)
+	assert instance.config.profile_acceleration_rad_s2 == pytest.approx(12.0)
 	assert completed[-1][0:2] == ("configure_ranges", True)
 
 	instance.connect_motor()
 	backend = factory.created[-1]
 	assert backend.minimum_position_rad == pytest.approx(-1.0)
 	assert backend.maximum_position_rad == pytest.approx(1.8)
-	instance.configure_ranges(-0.5, 1.5, 1.4, -1.0)
+	instance.configure_ranges(-0.5, 1.5, 1.4, -1.0, 2.0, 8.0)
 	assert instance.config.minimum_position_rad == pytest.approx(-1.0)
 	assert instance.config.maximum_position_rad == pytest.approx(1.8)
 	assert completed[-1][0:2] == ("configure_ranges", False)
@@ -255,6 +257,33 @@ def test_homing_success_and_cancellation_are_incremental(qtbot, worker) -> None:
 	assert instance.state == MotorState.IDLE
 	assert not backend.enabled
 	assert backend.commanded_torque_Nm == 0.0
+
+
+def test_unzeroed_position_below_command_minimum_can_connect_and_home(qtbot) -> None:
+	backend = MockMotorBackend(
+		minimum_position_rad=-1.0,
+		maximum_position_rad=2.2,
+		initial_position_rad=-1.5,
+	)
+	worker = MotorWorker(_config(minimum_position_rad=-1.0), _Factory(backend))
+	worker.initialize()
+	try:
+		worker.connect_motor()
+		assert worker.state == MotorState.IDLE
+		assert worker._position_rad == pytest.approx(-1.5)
+		worker.enable_drive()
+		worker.start_homing()
+		qtbot.waitUntil(
+			lambda: worker.state == MotorState.IDLE and worker._homed,
+			timeout=800,
+		)
+		assert worker._position_rad == pytest.approx(0.0)
+
+		worker.move_to_position(-1.1, 5.0, 20.0)
+		assert worker.state == MotorState.IDLE
+		assert "outside -1..2.2" in worker._latest_warning
+	finally:
+		worker._timer.stop()
 
 
 def test_homing_timeout_enters_fault_and_disables(qtbot) -> None:
@@ -417,6 +446,8 @@ def test_motor_panel_button_rules_and_direct_stop(qtbot) -> None:
 		panel.range_maximum_position.setValue(1.8)
 		panel.range_open_position.setValue(1.6)
 		panel.range_minimum_torque.setValue(-2.0)
+		panel.range_maximum_velocity.setValue(3.0)
+		panel.range_maximum_acceleration.setValue(12.0)
 		panel._confirm_action = lambda *_args: True
 		panel.apply_ranges_button.click()
 		qtbot.waitUntil(
@@ -426,9 +457,13 @@ def test_motor_panel_button_rules_and_direct_stop(qtbot) -> None:
 		assert panel.config.minimum_position_rad == pytest.approx(-1.0)
 		assert panel.config.open_position_rad == pytest.approx(1.6)
 		assert panel.config.maximum_closing_torque_Nm == pytest.approx(2.0)
+		assert panel.config.profile_velocity_rad_s == pytest.approx(3.0)
+		assert panel.config.profile_acceleration_rad_s2 == pytest.approx(12.0)
 		assert panel.position.maximum() == pytest.approx(1.8)
 		assert panel.position.minimum() == pytest.approx(-1.0)
 		assert panel.torque.minimum() == pytest.approx(-2.0)
+		assert panel.velocity.maximum() == pytest.approx(3.0)
+		assert panel.acceleration.maximum() == pytest.approx(12.0)
 
 		panel.update_state({
 			"backend_type": "mock",

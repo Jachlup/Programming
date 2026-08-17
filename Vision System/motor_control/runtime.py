@@ -242,13 +242,15 @@ class MotorWorker(QObject):
 			self._timer.start()
 		self._emit_state()
 
-	@Slot(float, float, float, float)
+	@Slot(float, float, float, float, float, float)
 	def configure_ranges(
 		self,
 		minimum_position_rad: float,
 		maximum_position_rad: float,
 		open_position_rad: float,
 		minimum_closing_torque_Nm: float,
+		maximum_velocity_rad_s: float,
+		maximum_acceleration_rad_s2: float,
 	) -> None:
 		command = "configure_ranges"
 		self._trace(
@@ -256,7 +258,9 @@ class MotorWorker(QObject):
 			f"configure position range={minimum_position_rad:g}.."
 			f"{maximum_position_rad:g} rad, "
 			f"open target={open_position_rad:g} rad, "
-			f"torque range={minimum_closing_torque_Nm:g}..0 Nm",
+			f"torque range={minimum_closing_torque_Nm:g}..0 Nm, "
+			f"maximum velocity={maximum_velocity_rad_s:g} rad/s, "
+			f"maximum acceleration={maximum_acceleration_rad_s2:g} rad/s²",
 		)
 		try:
 			if self._connected:
@@ -270,6 +274,8 @@ class MotorWorker(QObject):
 				maximum_position_rad=float(maximum_position_rad),
 				open_position_rad=float(open_position_rad),
 				maximum_closing_torque_Nm=abs(minimum_torque),
+				profile_velocity_rad_s=float(maximum_velocity_rad_s),
+				profile_acceleration_rad_s2=float(maximum_acceleration_rad_s2),
 			)
 			if self._config_persist_path is not None:
 				save_motor_config(updated, self._config_persist_path)
@@ -286,7 +292,9 @@ class MotorWorker(QObject):
 				f"Configured position range {updated.minimum_position_rad:g}.."
 				f"{updated.maximum_position_rad:g} rad "
 				f"(open target {updated.open_position_rad:g} rad) and closing torque "
-				f"range -{updated.maximum_closing_torque_Nm:g}..0 Nm."
+				f"range -{updated.maximum_closing_torque_Nm:g}..0 Nm, maximum velocity "
+				f"{updated.profile_velocity_rad_s:g} rad/s, and maximum acceleration "
+				f"{updated.profile_acceleration_rad_s2:g} rad/s²."
 			)
 			if self._config_persist_path is not None:
 				message += f" Saved to {self._config_persist_path}."
@@ -619,9 +627,13 @@ class MotorWorker(QObject):
 		temperature = float(backend.read_temperature())
 		if not all(math.isfinite(value) for value in (position, velocity, torque, temperature)):
 			raise RuntimeError("Motor feedback contains a non-finite value")
-		if not self.config.minimum_position_rad <= position <= self.config.maximum_position_rad:
+		# The encoder is intentionally not zeroed until homing finishes, so its
+		# pre-home reading may be below the configured profiled-command minimum.
+		# Keep that minimum as a command limit; do not make it a feedback interlock.
+		if position > self.config.maximum_position_rad:
 			raise RuntimeError(
-				f"Motor position {position:g} rad is outside the configured range"
+				f"Motor position {position:g} rad exceeds the configured maximum "
+				f"{self.config.maximum_position_rad:g} rad"
 			)
 		if temperature > self.config.maximum_temperature_C:
 			raise RuntimeError(
@@ -863,7 +875,7 @@ class MotorController(QObject):
 	_update_torque = Signal(float)
 	_finger_force = Signal(float, float, float)
 	_update_finger_force = Signal(float, float, float)
-	_configure_ranges = Signal(float, float, float, float)
+	_configure_ranges = Signal(float, float, float, float, float, float)
 	_release = Signal()
 	_stop = Signal()
 	_shutdown = Signal()
@@ -940,12 +952,16 @@ class MotorController(QObject):
 		maximum_position_rad: float,
 		open_position_rad: float,
 		minimum_closing_torque_Nm: float,
+		maximum_velocity_rad_s: float,
+		maximum_acceleration_rad_s2: float,
 	) -> None:
 		self._configure_ranges.emit(
 			float(minimum_position_rad),
 			float(maximum_position_rad),
 			float(open_position_rad),
 			float(minimum_closing_torque_Nm),
+			float(maximum_velocity_rad_s),
+			float(maximum_acceleration_rad_s2),
 		)
 	def release_torque(self) -> None: self._release.emit()
 	def stop_motor(self) -> None: self._stop.emit()

@@ -44,7 +44,9 @@ class MainWindow(QMainWindow):
 		self.setMinimumSize(1080, 720)
 
 		self.tabs = QTabWidget()
-		self.camera_panel = CameraPanel(self.controller)
+		# Keep one live image widget for both clicking/calibration and display.
+		# It lives in a persistent dock so changing tabs never hides the feed.
+		self.camera_panel = CameraPanel(self.controller, embed_video=False)
 		self.reference_panel = self.camera_panel.reference_panel
 		self.tuning_panel = TuningPanel(self.controller)
 		self.dataset_panel = DatasetPanel(self.controller)
@@ -61,6 +63,27 @@ class MainWindow(QMainWindow):
 			lambda: self.tabs.setCurrentWidget(self.tuning_panel)
 		)
 		self.setCentralWidget(self.tabs)
+
+		self.camera_preview_dock = QDockWidget("Live camera preview", self)
+		self.camera_preview_dock.setObjectName("camera-preview-dock")
+		self.camera_preview_dock.setAllowedAreas(
+			Qt.DockWidgetArea.LeftDockWidgetArea
+			| Qt.DockWidgetArea.RightDockWidgetArea
+		)
+		self.camera_preview_dock.setFeatures(
+			QDockWidget.DockWidgetFeature.DockWidgetMovable
+			| QDockWidget.DockWidgetFeature.DockWidgetFloatable
+		)
+		self.camera_preview_dock.setWidget(self.camera_panel.video)
+		self.addDockWidget(
+			Qt.DockWidgetArea.RightDockWidgetArea,
+			self.camera_preview_dock,
+		)
+		self.resizeDocks(
+			[self.camera_preview_dock],
+			[520],
+			Qt.Orientation.Horizontal,
+		)
 
 		self.console = CommandConsole(self.controller)
 		console_dock = QDockWidget("Command console and logs", self)

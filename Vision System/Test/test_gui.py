@@ -222,11 +222,23 @@ def test_main_window_embeds_reference_with_camera_and_stops_worker(qtbot) -> Non
 		"Camera", "Tuning", "Dataset", "Motor", "Collection", "Training",
 	]
 	assert window.reference_panel is window.camera_panel.reference_panel
+	assert window.camera_preview_dock.widget() is window.camera_panel.video
+	assert window.camera_preview_dock.isVisible()
+	assert not (
+		window.camera_preview_dock.features()
+		& window.camera_preview_dock.DockWidgetFeature.DockWidgetClosable
+	)
 	assert window.camera_panel.control_tabs.tabText(2) == "Blue blob"
 	assert window.camera_panel.control_tabs.tabText(3) == "Reference setup"
 	assert window.camera_panel.blue_blob_panel.mask_only.isCheckable()
 	assert window.camera_panel.calibration_mask_only.isCheckable()
 	assert window.tuning_panel.mask_only.isCheckable()
+	controller.frame_ready.emit(np.zeros((60, 80, 3), dtype=np.uint8))
+	qtbot.waitUntil(lambda: window.camera_panel.video._image is not None)
+	window.tabs.setCurrentWidget(window.tuning_panel)
+	assert window.camera_preview_dock.isVisible()
+	assert window.camera_panel.video._image.width() == 80
+	assert window.camera_panel.video._image.height() == 60
 	mask_state = {
 		"display_options": {"show_mask_only": True},
 		"mode": "DIAGNOSTIC",
